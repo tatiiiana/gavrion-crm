@@ -7,7 +7,7 @@ import { createClientSupabase } from "@/lib/supabase/client";
 const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últimos 30 días", year: "este año" };
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
 type ChatMessage = { id: string; text: string; direction: "inbound" | "outbound"; createdAt: string };
-type Thread = { id: string; name: string; channel: string; preview: string; contactId: string; externalThreadId: string; messages: ChatMessage[] };
+type Thread = { id: string; name: string; channel: string; preview: string; contactId: string; externalThreadId: string; handlingMode: "bot" | "waiting_agent" | "human"; messages: ChatMessage[] };
 
 export default function Dashboard() {
   const [authReady, setAuthReady] = useState(false);
@@ -22,6 +22,13 @@ export default function Dashboard() {
   const [logoFailed, setLogoFailed] = useState(false);
   const [widgetKey, setWidgetKey] = useState("");
   const [widgetBaseUrl, setWidgetBaseUrl] = useState("");
+  const [assistantEnabled, setAssistantEnabled] = useState(true);
+  const [assistantName, setAssistantName] = useState("Asistente virtual");
+  const [assistantInstructions, setAssistantInstructions] = useState("Responde con amabilidad, brevedad y únicamente con información confirmada.");
+  const [handoffMessage, setHandoffMessage] = useState("Voy a transferir esta conversación a una persona del equipo para ayudarte mejor.");
+  const [knowledgeId, setKnowledgeId] = useState("");
+  const [knowledgeContent, setKnowledgeContent] = useState("");
+  const [savingAssistant, setSavingAssistant] = useState(false);
   const [userId, setUserId] = useState("");
   const [dataLoading, setDataLoading] = useState(true);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -83,11 +90,23 @@ export default function Dashboard() {
           setBrandingLogoUrl(logoUrl);
           setWidgetKey(String(tenant?.widget_key || ""));
 
+          const [assistantResult, knowledgeResult] = await Promise.all([
+            supabase.from("assistant_settings").select("enabled, assistant_name, instructions, handoff_message").eq("tenant_id", membership.tenant_id).maybeSingle(),
+            supabase.from("knowledge_documents").select("id, content").eq("tenant_id", membership.tenant_id).eq("active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle()
+          ]);
+          if (assistantResult.data) {
+            setAssistantEnabled(assistantResult.data.enabled);
+            setAssistantName(assistantResult.data.assistant_name);
+            setAssistantInstructions(assistantResult.data.instructions);
+            setHandoffMessage(assistantResult.data.handoff_message);
+          }
+          if (knowledgeResult.data) { setKnowledgeId(knowledgeResult.data.id); setKnowledgeContent(knowledgeResult.data.content); }
+
           const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult] = await Promise.all([
             supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
             supabase.from("tasks").select("id, title, due_at, completed_at").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }),
             supabase.from("deals").select("id, title, stage, value, currency, contact_id, expected_close_date").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
-            supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }),
+            supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, handling_mode, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }),
             supabase.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: true })
           ]);
           if (contactsResult.error || tasksResult.error || dealsResult.error || conversationsResult.error || messagesResult.error) {
@@ -103,7 +122,7 @@ export default function Dashboard() {
             setThreads((conversationsResult.data || []).map(conversation => {
               const conversationMessages: ChatMessage[] = allMessages.filter(item => item.conversation_id === conversation.id).map(item => ({ id: item.id, text: item.body || "[Mensaje multimedia]", direction: item.direction as "inbound" | "outbound", createdAt: item.created_at }));
               const contact = loadedContacts.find(item => item.id === conversation.contact_id);
-              return { id: conversation.id, name: contact?.name || conversation.external_thread_id || "Contacto", channel: channelLabels[conversation.channel] || conversation.channel, preview: conversationMessages.at(-1)?.text || "Sin mensajes", contactId: conversation.contact_id || "", externalThreadId: conversation.external_thread_id || "", messages: conversationMessages };
+              return { id: conversation.id, name: contact?.name || conversation.external_thread_id || "Contacto", channel: channelLabels[conversation.channel] || conversation.channel, preview: conversationMessages.at(-1)?.text || "Sin mensajes", contactId: conversation.contact_id || "", externalThreadId: conversation.external_thread_id || "", handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"], messages: conversationMessages };
             }));
           }
         } else {
@@ -287,6 +306,16 @@ export default function Dashboard() {
     setThreads(current => current.map((item, index) => index === selectedThread ? { ...item, preview: sent.text, messages: [...item.messages, sent] } : item));
     setMessage(""); showNotice("success", thread.channel === "Chat web" ? "Respuesta enviada al chat web." : "Mensaje enviado por WhatsApp.");
   }
+
+  async function setConversationMode(mode: "bot" | "human") {
+    const thread = threads[selectedThread];
+    if (!thread) return;
+    const response = await fetch("/api/conversations/handoff", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: thread.id, mode }) });
+    const result = await response.json();
+    if (!response.ok) { showNotice("error", result.error || "No se pudo cambiar la atención."); return; }
+    setThreads(current => current.map((item, index) => index === selectedThread ? { ...item, handlingMode: result.handling_mode } : item));
+    showNotice("success", mode === "human" ? "Ahora atiende una persona." : "El asistente automático fue reactivado.");
+  }
   const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", contactos: "Contactos", pipeline: "Pipeline comercial", automatizaciones: "Automatizaciones", reportes: "Reportes", configuracion: "Configuración" };
   const globalResults = useMemo(() => {
     const query = globalQuery.trim().toLowerCase();
@@ -336,6 +365,22 @@ export default function Dashboard() {
     showNotice("success", "Identidad de la empresa actualizada.");
   }
 
+  async function saveAssistant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!tenantId || !assistantName.trim() || !knowledgeContent.trim()) { showNotice("error", "Completa el nombre y la información de la empresa."); return; }
+    const supabase = createClientSupabase();
+    if (!supabase) return;
+    setSavingAssistant(true);
+    const settingsRequest = supabase.from("assistant_settings").upsert({ tenant_id: tenantId, enabled: assistantEnabled, assistant_name: assistantName.trim(), instructions: assistantInstructions.trim(), handoff_message: handoffMessage.trim(), updated_at: new Date().toISOString() });
+    const knowledgePayload = { tenant_id: tenantId, title: "Información principal", content: knowledgeContent.trim(), active: true, updated_at: new Date().toISOString() };
+    const knowledgeRequest = knowledgeId ? supabase.from("knowledge_documents").update(knowledgePayload).eq("id", knowledgeId).eq("tenant_id", tenantId).select("id").single() : supabase.from("knowledge_documents").insert(knowledgePayload).select("id").single();
+    const [settingsResult, knowledgeResult] = await Promise.all([settingsRequest, knowledgeRequest]);
+    setSavingAssistant(false);
+    if (settingsResult.error || knowledgeResult.error) { showNotice("error", settingsResult.error?.message || knowledgeResult.error?.message || "No se pudo guardar el asistente."); return; }
+    if (knowledgeResult.data?.id) setKnowledgeId(knowledgeResult.data.id);
+    showNotice("success", "Asistente y conocimiento actualizados.");
+  }
+
   const currentThread = threads[selectedThread] || null;
 
   if (!authReady) return <main className="auth-shell"><div className="auth-loading"><span className="brand-mark">G</span><strong>Abriendo Gavrion CRM…</strong></div></main>;
@@ -368,7 +413,7 @@ export default function Dashboard() {
         </div>
       </section>}
 
-      {view === "conversaciones" && <section className="view active"><div className="section-heading"><div><h2>Bandeja unificada</h2><p>Conversaciones reales recibidas desde Meta y WhatsApp.</p></div></div>{currentThread ? <div className="inbox-layout"><aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span><time>{thread.channel}</time></button>)}</aside><article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel}</small></div></div><div className="messages">{currentThread.messages.map(item=><div key={item.id} className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></div>)}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article><aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside></div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando Meta entregue el primer mensaje al webhook aparecerá automáticamente en esta bandeja.</p></div>}</section>}
+      {view === "conversaciones" && <section className="view active"><div className="section-heading"><div><h2>Bandeja unificada</h2><p>Conversaciones atendidas por el asistente y por el equipo.</p></div></div>{currentThread ? <div className="inbox-layout"><aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span><time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time></button>)}</aside><article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel} · {currentThread.handlingMode==="waiting_agent"?"esperando agente":currentThread.handlingMode==="human"?"atención humana":"asistente activo"}</small></div></div><div className="messages">{currentThread.messages.map(item=><div key={item.id} className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></div>)}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article><aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Atención</h4><span className={`tag handling-${currentThread.handlingMode}`}>{currentThread.handlingMode==="waiting_agent"?"Requiere agente":currentThread.handlingMode==="human"?"Atención humana":"Asistente activo"}</span><div className="handoff-actions">{currentThread.handlingMode!=="human"&&<button className="primary-button" onClick={()=>setConversationMode("human")}>Tomar conversación</button>}{currentThread.handlingMode!=="bot"&&<button className="secondary-button" onClick={()=>setConversationMode("bot")}>Devolver al asistente</button>}</div></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside></div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando llegue el primer mensaje aparecerá automáticamente en esta bandeja.</p></div>}</section>}
 
       {view === "contactos" && <section className="view active"><div className="section-heading"><div><h2>Contactos</h2><p>Clientes y prospectos guardados en Supabase.</p></div><button className="primary-button" onClick={openNewContact}>＋ Nuevo contacto</button></div>{showContactForm&&<form className="inline-create contact-create" onSubmit={saveContact}><input autoFocus required value={contactName} onChange={e=>setContactName(e.target.value)} placeholder="Nombre completo"/><input type="email" value={contactEmail} onChange={e=>setContactEmail(e.target.value)} placeholder="Correo"/><input value={contactPhone} onChange={e=>setContactPhone(e.target.value)} placeholder="Teléfono"/><input value={contactCompany} onChange={e=>setContactCompany(e.target.value)} placeholder="Empresa"/><select className="select" value={contactStatus} onChange={e=>setContactStatus(e.target.value as Contact["status"])} aria-label="Estado del contacto"><option>Prospecto</option><option>Cliente</option><option>Inactivo</option></select><button className="primary-button">{editingContactId ? "Actualizar" : "Guardar"}</button><button type="button" className="ghost-button" onClick={closeContactForm}>Cancelar</button></form>}<article className="panel table-panel"><div className="table-tools"><label className="search">⌕ <input value={contactQuery} onChange={e=>setContactQuery(e.target.value)} placeholder="Buscar contacto..."/></label></div><div className="table-scroll"><table><thead><tr><th>Contacto</th><th>Empresa</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>{dataLoading ? <tr><td colSpan={5} className="table-empty">Cargando contactos…</td></tr> : contacts.filter(c=>(c.name+c.email+c.company).toLowerCase().includes(contactQuery.toLowerCase())).map(contact=><tr key={contact.id}><td><div className="contact-cell"><span className="avatar">{contact.name[0]}</span><span><strong>{contact.name}</strong><small>{contact.email || "Sin correo"}</small></span></div></td><td>{contact.company || "—"}</td><td>{contact.phone || "—"}</td><td><span className={`status ${contact.status==="Cliente"?"client":contact.status==="Inactivo"?"inactive":"lead"}`}>{contact.status}</span></td><td><div className="row-actions"><button className="ghost-button" onClick={()=>editContact(contact)}>Editar</button><button className="ghost-button" onClick={()=>navigate("conversaciones")}>Contactar</button><button className="danger-button" onClick={()=>deleteContact(contact.id)}>Eliminar</button></div></td></tr>)}</tbody></table></div></article></section>}
 
@@ -381,6 +426,7 @@ export default function Dashboard() {
       {view === "configuracion" && <section className="view active">
         <div className="section-heading"><div><h2>Configuración</h2><p>Administra la identidad y los servicios de esta empresa.</p></div></div>
         <form className="panel branding-settings" onSubmit={saveBranding}><div className="branding-preview">{brandingLogoUrl ? <img src={brandingLogoUrl} alt="Vista previa del logo" /> : <span>{(brandingName || "E").charAt(0).toUpperCase()}</span>}</div><label>Nombre de la empresa<input required value={brandingName} onChange={e=>setBrandingName(e.target.value)} placeholder="Nombre comercial" /></label><label>URL pública del logo<input type="url" value={brandingLogoUrl} onChange={e=>setBrandingLogoUrl(e.target.value)} placeholder="https://.../logo.png" /></label><button className="primary-button" disabled={savingBranding}>{savingBranding ? "Guardando…" : "Guardar identidad"}</button></form>
+        <form className="panel assistant-settings" onSubmit={saveAssistant}><div className="assistant-settings-head"><div><p className="eyebrow">ASISTENTE AUTOMÁTICO</p><h3>Conocimiento de la empresa</h3><p>Escribe información confirmada sobre servicios, horarios, ubicación, precios, políticas y preguntas frecuentes.</p></div><label className="assistant-switch"><input type="checkbox" checked={assistantEnabled} onChange={e=>setAssistantEnabled(e.target.checked)} /> Respuestas automáticas</label></div><div className="assistant-fields"><label>Nombre del asistente<input value={assistantName} onChange={e=>setAssistantName(e.target.value)} placeholder="Asistente virtual" /></label><label>Instrucciones de tono<input value={assistantInstructions} onChange={e=>setAssistantInstructions(e.target.value)} placeholder="Amable, breve y profesional" /></label></div><label>Información para responder<textarea required rows={10} value={knowledgeContent} onChange={e=>setKnowledgeContent(e.target.value)} placeholder={'Ejemplo:\nHorario: todos los días de 6:30 a. m. a 9:00 p. m.\nUbicación: CA-4, km 115.\nEspecialidades: sopa de gallina india, pescado frito...'} /></label><label>Mensaje de transferencia<input value={handoffMessage} onChange={e=>setHandoffMessage(e.target.value)} /></label><div className="assistant-save"><small>La IA transferirá cuando no encuentre una respuesta confirmada o el visitante pida una persona.</small><button className="primary-button" disabled={savingAssistant}>{savingAssistant?"Guardando…":"Guardar y activar"}</button></div></form>
         {widgetKey&&widgetBaseUrl&&<article className="panel widget-install"><div><h3>Chatbox para el sitio web</h3><p>Copia este código antes de <code>&lt;/body&gt;</code> en el sitio de esta empresa.</p></div><pre>{`<script src="${widgetBaseUrl}/widget.js" data-tenant="${widgetKey}" defer></script>`}</pre><button className="secondary-button" onClick={()=>navigator.clipboard.writeText(`<script src="${widgetBaseUrl}/widget.js" data-tenant="${widgetKey}" defer></script>`).then(()=>showNotice("success","Código del chatbox copiado."))}>Copiar código</button></article>}
         <div className="settings-grid">{[["◫","Widget de chat","Personaliza el mensaje y color."],["W","WhatsApp","Meta Cloud API lista para conectar."],["◎","Instagram y Facebook","Centraliza mensajes de Meta."],["✦","Asistente con IA","Configura conocimiento y tono."]].map(([icon,title,description],index)=><article className="panel settings-card" key={title}><span className={`metric-icon ${["blue","mint","rose","amber"][index]}`}>{icon}</span><h3>{title}</h3><p>{description}</p><button className="secondary-button" onClick={()=>alert(`${title}: configuración disponible al agregar las credenciales del servicio.`)}>Configurar</button></article>)}</div>
       </section>}
