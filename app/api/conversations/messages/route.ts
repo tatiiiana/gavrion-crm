@@ -11,7 +11,6 @@ export async function POST(request: Request) {
   const { data: conversation } = await supabase.from("conversations").select("id, tenant_id, channel").eq("id", conversationId).single();
   if (!conversation || conversation.channel !== "web") return NextResponse.json({ error: "Conversación no disponible" }, { status: 404 });
   const { data, error } = await supabase.from("messages").insert({ tenant_id: conversation.tenant_id, conversation_id: conversation.id, direction: "outbound", sender_type: "agent", sender_id: auth.user.id, body, metadata: { source: "crm" } }).select("id, body, direction, created_at").single();
-  if (!error) await supabase.from("conversations").update({ last_message_at: new Date().toISOString() }).eq("id", conversation.id);
+  if (!error) await supabase.from("conversations").update({ last_message_at: new Date().toISOString(), handling_mode: "human", status: "open", assigned_to: auth.user.id }).eq("id", conversation.id);
   return error ? NextResponse.json({ error: error.message }, { status: 400 }) : NextResponse.json(data, { status: 201 });
 }
-
