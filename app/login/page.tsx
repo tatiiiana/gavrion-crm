@@ -58,7 +58,7 @@ export default function LoginPage() {
       }
     } catch (error) {
       setMessage({ type: "error", text: friendlyError(error instanceof Error ? error.message : "") });
-    } finally { setLoading(false); }
+    } finally { setPassword(""); setLoading(false); }
   }
 
   function changeMode(next: "login" | "signup") { setMode(next); setErrors({}); setMessage(null); }
@@ -70,11 +70,11 @@ export default function LoginPage() {
       <h1>{mode === "login" ? "Bienvenido de nuevo" : "Crea tu cuenta"}</h1>
       <p>{mode === "login" ? "Administra conversaciones, clientes y oportunidades desde un solo lugar." : "Configura el espacio de trabajo de tu empresa."}</p>
       <div className="auth-tabs" role="tablist"><button type="button" className={mode === "login" ? "active" : ""} onClick={()=>changeMode("login")}>Ingresar</button><button type="button" className={mode === "signup" ? "active" : ""} onClick={()=>changeMode("signup")}>Crear cuenta</button></div>
-      <form className="auth-form" onSubmit={submit} noValidate>
+      <form className="auth-form" onSubmit={submit} noValidate autoComplete="off">
         {mode === "signup" && <label>Nombre completo<input value={fullName} onChange={e=>setFullName(e.target.value)} aria-invalid={Boolean(errors.fullName)} autoComplete="name" placeholder="Ej. María Rodríguez" />{errors.fullName&&<small className="field-error">{errors.fullName}</small>}</label>}
         {mode === "signup" && <label>Empresa<input value={company} onChange={e=>setCompany(e.target.value)} aria-invalid={Boolean(errors.company)} autoComplete="organization" />{errors.company&&<small className="field-error">{errors.company}</small>}</label>}
         <label>Correo<input value={email} onChange={e=>setEmail(e.target.value)} type="email" aria-invalid={Boolean(errors.email)} autoComplete="email" placeholder="tu@empresa.com" />{errors.email&&<small className="field-error">{errors.email}</small>}</label>
-        <label>Contraseña<input value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete={mode === "login" ? "current-password" : "new-password"} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
+        <label>Contraseña<input value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete="off" data-lpignore="true" data-1p-ignore="true" spellCheck={false} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
         {message&&<div className={`auth-message ${message.type}`} role="status">{message.text}</div>}
         <button disabled={loading} className="primary-button auth-submit">{loading ? "Procesando…" : mode === "login" ? "Ingresar" : "Crear cuenta"}</button>
       </form>
