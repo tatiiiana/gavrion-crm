@@ -15,6 +15,13 @@ export default function Dashboard() {
   const [greeting, setGreeting] = useState("Hola");
   const [account, setAccount] = useState({ name: "Usuario", email: "", initials: "U", role: "Miembro", company: "" });
   const [tenantId, setTenantId] = useState("");
+  const [tenantLogoUrl, setTenantLogoUrl] = useState("");
+  const [brandingName, setBrandingName] = useState("");
+  const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
+  const [savingBranding, setSavingBranding] = useState(false);
+  const [logoFailed, setLogoFailed] = useState(false);
+  const [widgetKey, setWidgetKey] = useState("");
+  const [widgetBaseUrl, setWidgetBaseUrl] = useState("");
   const [userId, setUserId] = useState("");
   const [dataLoading, setDataLoading] = useState(true);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -54,6 +61,7 @@ export default function Dashboard() {
   const [dealCloseDate, setDealCloseDate] = useState("");
 
   useEffect(() => {
+    setWidgetBaseUrl(window.location.origin);
     const supabase = createClientSupabase();
     if (!supabase) { setAuthReady(true); return; }
     supabase.auth.getSession().then(async ({ data }) => {
@@ -67,8 +75,13 @@ export default function Dashboard() {
         let company = String(user.user_metadata?.company_name || "");
         if (membership?.tenant_id) {
           setTenantId(membership.tenant_id);
-          const { data: tenant } = await supabase.from("tenants").select("name").eq("id", membership.tenant_id).maybeSingle();
+          const { data: tenant } = await supabase.from("tenants").select("name, logo_url, widget_key").eq("id", membership.tenant_id).maybeSingle();
           if (tenant?.name) company = tenant.name;
+          const logoUrl = String(tenant?.logo_url || "");
+          setTenantLogoUrl(logoUrl);
+          setBrandingName(company);
+          setBrandingLogoUrl(logoUrl);
+          setWidgetKey(String(tenant?.widget_key || ""));
 
           const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult] = await Promise.all([
             supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
@@ -266,12 +279,13 @@ export default function Dashboard() {
     const thread = threads[selectedThread];
     const body = message.trim();
     if (!body || !thread) return;
-    const response = await fetch("/api/meta/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: thread.id, text: body }) });
+    const endpoint = thread.channel === "Chat web" ? "/api/conversations/messages" : "/api/meta/messages";
+    const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: thread.id, text: body }) });
     const result = await response.json();
     if (!response.ok) { showNotice("error", result.error || "No se pudo enviar el mensaje."); return; }
     const sent: ChatMessage = { id: result.id, text: result.body || body, direction: "outbound", createdAt: result.created_at || new Date().toISOString() };
     setThreads(current => current.map((item, index) => index === selectedThread ? { ...item, preview: sent.text, messages: [...item.messages, sent] } : item));
-    setMessage(""); showNotice("success", "Mensaje enviado por WhatsApp.");
+    setMessage(""); showNotice("success", thread.channel === "Chat web" ? "Respuesta enviada al chat web." : "Mensaje enviado por WhatsApp.");
   }
   const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", contactos: "Contactos", pipeline: "Pipeline comercial", automatizaciones: "Automatizaciones", reportes: "Reportes", configuracion: "Configuración" };
   const globalResults = useMemo(() => {
@@ -301,13 +315,34 @@ export default function Dashboard() {
     }
   }
 
+  async function saveBranding(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const companyName = brandingName.trim();
+    const logoUrl = brandingLogoUrl.trim();
+    if (!companyName || !tenantId) return;
+    if (logoUrl && !/^https:\/\//i.test(logoUrl)) {
+      showNotice("error", "La URL del logo debe comenzar con https://");
+      return;
+    }
+    const supabase = createClientSupabase();
+    if (!supabase) return;
+    setSavingBranding(true);
+    const { error } = await supabase.from("tenants").update({ name: companyName, logo_url: logoUrl || null }).eq("id", tenantId);
+    setSavingBranding(false);
+    if (error) { showNotice("error", `No se pudo guardar la identidad: ${error.message}`); return; }
+    setTenantLogoUrl(logoUrl);
+    setLogoFailed(false);
+    setAccount(current => ({ ...current, company: companyName }));
+    showNotice("success", "Identidad de la empresa actualizada.");
+  }
+
   const currentThread = threads[selectedThread] || null;
 
   if (!authReady) return <main className="auth-shell"><div className="auth-loading"><span className="brand-mark">G</span><strong>Abriendo Gavrion CRM…</strong></div></main>;
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand gavrion-brand"><span className="brand-mark">G</span><span>Gavrion</span></div>
+      <div className="brand gavrion-brand tenant-brand">{tenantLogoUrl && !logoFailed ? <img className="tenant-logo" src={tenantLogoUrl} alt={`Logo de ${account.company || "la empresa"}`} onError={()=>setLogoFailed(true)} /> : <span className="brand-mark">{(account.company || "E").charAt(0).toUpperCase()}</span>}<span>{account.company || "Mi empresa"}</span></div>
       <nav className="nav">{[["inicio","⌂","Inicio"],["conversaciones","◫","Conversaciones"],["contactos","♙","Contactos"],["pipeline","▦","Pipeline"],["automatizaciones","⌁","Automatizaciones"],["reportes","⌗","Reportes"]].map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&<i>8</i>}</button>)}</nav>
       <div className="sidebar-bottom"><button onClick={()=>navigate("configuracion")} className={`nav-item ${view==="configuracion"?"active":""}`}><span>⚙</span>Configuración</button><div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
     </aside>
@@ -343,7 +378,12 @@ export default function Dashboard() {
 
       {view === "reportes" && <section className="view active"><div className="section-heading"><div><h2>Reportes</h2><p>Rendimiento comercial y de atención.</p></div></div><div className="metrics-grid">{[["Tiempo de respuesta","4m 12s"],["Tasa de conversión","18.6%"],["Satisfacción","4.8/5"],["Ventas ganadas","28"]].map(([label,value])=><article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small className="positive">↗ Rendimiento saludable</small></article>)}</div><article className="panel report-panel"><h3>Conversaciones atendidas</h3><div className="bars">{[45,65,56,82,74,91,80].map((height,index)=><span key={index} style={{height:`${height}%`}} />)}</div></article></section>}
 
-      {view === "configuracion" && <section className="view active"><div className="section-heading"><div><h2>Configuración</h2><p>Conecta los servicios de cada empresa.</p></div></div><div className="settings-grid">{[["◫","Widget de chat","Personaliza el mensaje y color."],["W","WhatsApp","Meta Cloud API lista para conectar."],["◎","Instagram y Facebook","Centraliza mensajes de Meta."],["✦","Asistente con IA","Configura conocimiento y tono."]].map(([icon,title,description],index)=><article className="panel settings-card" key={title}><span className={`metric-icon ${["blue","mint","rose","amber"][index]}`}>{icon}</span><h3>{title}</h3><p>{description}</p><button className="secondary-button" onClick={()=>alert(`${title}: configuración disponible al agregar las credenciales del servicio.`)}>Configurar</button></article>)}</div></section>}
+      {view === "configuracion" && <section className="view active">
+        <div className="section-heading"><div><h2>Configuración</h2><p>Administra la identidad y los servicios de esta empresa.</p></div></div>
+        <form className="panel branding-settings" onSubmit={saveBranding}><div className="branding-preview">{brandingLogoUrl ? <img src={brandingLogoUrl} alt="Vista previa del logo" /> : <span>{(brandingName || "E").charAt(0).toUpperCase()}</span>}</div><label>Nombre de la empresa<input required value={brandingName} onChange={e=>setBrandingName(e.target.value)} placeholder="Nombre comercial" /></label><label>URL pública del logo<input type="url" value={brandingLogoUrl} onChange={e=>setBrandingLogoUrl(e.target.value)} placeholder="https://.../logo.png" /></label><button className="primary-button" disabled={savingBranding}>{savingBranding ? "Guardando…" : "Guardar identidad"}</button></form>
+        {widgetKey&&widgetBaseUrl&&<article className="panel widget-install"><div><h3>Chatbox para el sitio web</h3><p>Copia este código antes de <code>&lt;/body&gt;</code> en el sitio de esta empresa.</p></div><pre>{`<script src="${widgetBaseUrl}/widget.js" data-tenant="${widgetKey}" defer></script>`}</pre><button className="secondary-button" onClick={()=>navigator.clipboard.writeText(`<script src="${widgetBaseUrl}/widget.js" data-tenant="${widgetKey}" defer></script>`).then(()=>showNotice("success","Código del chatbox copiado."))}>Copiar código</button></article>}
+        <div className="settings-grid">{[["◫","Widget de chat","Personaliza el mensaje y color."],["W","WhatsApp","Meta Cloud API lista para conectar."],["◎","Instagram y Facebook","Centraliza mensajes de Meta."],["✦","Asistente con IA","Configura conocimiento y tono."]].map(([icon,title,description],index)=><article className="panel settings-card" key={title}><span className={`metric-icon ${["blue","mint","rose","amber"][index]}`}>{icon}</span><h3>{title}</h3><p>{description}</p><button className="secondary-button" onClick={()=>alert(`${title}: configuración disponible al agregar las credenciales del servicio.`)}>Configurar</button></article>)}</div>
+      </section>}
       {notice&&<div className={`crm-notice ${notice.type}`} role="status">{notice.text}</div>}
     </main>
   </div>;
