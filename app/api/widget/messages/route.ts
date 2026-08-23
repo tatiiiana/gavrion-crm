@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
-import { createCompanyReply } from "@/lib/ai/company-assistant";
+import { createCompanyReply, type AssistantRequest } from "@/lib/ai/company-assistant";
 
 export const runtime = "nodejs";
 
@@ -59,21 +59,44 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400, headers: cors(origin) });
   let botMessage = null;
   if (conversation.handling_mode === "bot") {
-    const [{ data: assistant }, { data: documents }, { data: history }] = await Promise.all([
+    const [{ data: assistant }, { data: documents }, { data: history }, { data: properties }] = await Promise.all([
       supabase.from("assistant_settings").select("enabled, assistant_name, instructions, handoff_message").eq("tenant_id", tenant.id).maybeSingle(),
       supabase.from("knowledge_documents").select("title, content").eq("tenant_id", tenant.id).eq("active", true).limit(20),
-      supabase.from("messages").select("direction, body").eq("conversation_id", conversation.id).order("created_at", { ascending: false }).limit(10)
+      supabase.from("messages").select("direction, body").eq("conversation_id", conversation.id).order("created_at", { ascending: false }).limit(10),
+      supabase.from("properties").select("reference, title, property_type, operation, price, currency, city, zone, address, bedrooms, bathrooms, area_sqm, description, status").eq("tenant_id", tenant.id).eq("status", "available").limit(100)
     ]);
     if (assistant?.enabled !== false) {
       const handoffMessage = assistant?.handoff_message || "Voy a transferir esta conversación a una persona del equipo para ayudarte mejor.";
-      let generated: { reply: string; handoff: boolean; provider?: string };
+      let generated: { reply: string; handoff: boolean; provider?: string; request?: AssistantRequest };
       try {
-        generated = await createCompanyReply({ company: tenant.name, assistantName: assistant?.assistant_name || "Asistente virtual", instructions: assistant?.instructions || "Responde con amabilidad y brevedad.", handoffMessage, knowledge: documents || [], history: (history || []).reverse(), message: text, visitorId });
+        const inventory = (properties || []).map(property => `${property.reference || "Sin referencia"}: ${property.title}; ${property.property_type}; ${property.operation === "sale" ? "venta" : "alquiler"}; ${property.price} ${property.currency}; ${[property.city, property.zone, property.address].filter(Boolean).join(", ")}; ${property.bedrooms ?? "-"} habitaciones; ${property.bathrooms ?? "-"} baños; ${property.area_sqm ?? "-"} m². ${property.description || ""}`).join("\n");
+        const knowledge = [...(documents || []), ...(inventory ? [{ title: "Inventario inmobiliario disponible", content: inventory }] : [])];
+        generated = await createCompanyReply({ company: tenant.name, assistantName: assistant?.assistant_name || "Asistente virtual", instructions: assistant?.instructions || "Responde con amabilidad y brevedad.", handoffMessage, knowledge, history: (history || []).reverse(), message: text, visitorId });
       } catch (error) {
         console.error("[widget-ai] No se pudo generar la respuesta", error);
         generated = { reply: "En este momento el asistente está teniendo una dificultad temporal. Por favor, intenta nuevamente en unos minutos.", handoff: false, provider: "fallback" };
       }
-      const inserted = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "outbound", sender_type: "bot", body: generated.reply, metadata: { source: "ai_assistant", provider: generated.provider || "unknown", handoff: generated.handoff } }).select("id, direction, body, created_at").single();
+      const serviceRequest = generated.request;
+      if (serviceRequest?.ready) {
+        let requestError: { message: string } | null = null;
+        let propertyId: string | null = null;
+        if (serviceRequest.property_reference) {
+          const { data: property } = await supabase.from("properties").select("id").eq("tenant_id", tenant.id).ilike("reference", serviceRequest.property_reference).maybeSingle();
+          propertyId = property?.id || null;
+        }
+        if (serviceRequest.type === "property_inquiry" && serviceRequest.customer_name && serviceRequest.phone && serviceRequest.intent && (serviceRequest.property_reference || serviceRequest.property_type)) {
+          const saved = await supabase.from("property_inquiries").upsert({ tenant_id: tenant.id, conversation_id: conversation.id, contact_id: contact.id, property_id: propertyId, customer_name: serviceRequest.customer_name, phone: serviceRequest.phone, email: serviceRequest.email || null, intent: serviceRequest.intent, property_type: serviceRequest.property_type || null, city: serviceRequest.city || null, zone: serviceRequest.zone || null, budget_min: serviceRequest.budget_min || null, budget_max: serviceRequest.budget_max || null, bedrooms: serviceRequest.bedrooms || null, notes: [serviceRequest.property_reference ? `Referencia: ${serviceRequest.property_reference}` : "", serviceRequest.notes].filter(Boolean).join(" · ") || null, status: "new" }, { onConflict: "conversation_id" });
+          requestError = saved.error;
+        } else if (serviceRequest.type === "property_visit" && serviceRequest.customer_name && serviceRequest.phone && serviceRequest.property_reference && /^\d{4}-\d{2}-\d{2}$/.test(serviceRequest.date) && /^\d{2}:\d{2}/.test(serviceRequest.time) && serviceRequest.party_size > 0) {
+          const saved = await supabase.from("property_visits").upsert({ tenant_id: tenant.id, conversation_id: conversation.id, contact_id: contact.id, property_id: propertyId, property_reference: serviceRequest.property_reference, customer_name: serviceRequest.customer_name, phone: serviceRequest.phone, requested_date: serviceRequest.date, requested_time: serviceRequest.time.slice(0, 5), party_size: serviceRequest.party_size, notes: serviceRequest.notes || null, status: "pending" }, { onConflict: "conversation_id" });
+          requestError = saved.error;
+        }
+        if (requestError) {
+          console.error("[widget-request] No se pudo guardar la solicitud", requestError);
+          generated.reply = "Recibí tus datos, pero no pude registrar la solicitud en este momento. Por favor, intenta nuevamente o solicita atención del equipo.";
+        }
+      }
+      const inserted = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "outbound", sender_type: "bot", body: generated.reply, metadata: { source: "ai_assistant", provider: generated.provider || "unknown", handoff: generated.handoff, request_type: generated.request?.type || "none" } }).select("id, direction, body, created_at").single();
       botMessage = inserted.data;
       if (generated.handoff) await supabase.from("conversations").update({ handling_mode: "waiting_agent", status: "pending", last_message_at: new Date().toISOString() }).eq("id", conversation.id);
     }
