@@ -71,7 +71,7 @@ export async function POST(request: Request) {
         generated = await createCompanyReply({ company: tenant.name, assistantName: assistant?.assistant_name || "Asistente virtual", instructions: assistant?.instructions || "Responde con amabilidad y brevedad.", handoffMessage, knowledge: documents || [], history: (history || []).reverse(), message: text, visitorId });
       } catch (error) {
         console.error("[widget-ai] No se pudo generar la respuesta", error);
-        generated = { reply: handoffMessage, handoff: true, provider: "fallback" };
+        generated = { reply: "En este momento el asistente está teniendo una dificultad temporal. Por favor, intenta nuevamente en unos minutos.", handoff: false, provider: "fallback" };
       }
       const inserted = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "outbound", sender_type: "bot", body: generated.reply, metadata: { source: "ai_assistant", provider: generated.provider || "unknown", handoff: generated.handoff } }).select("id, direction, body, created_at").single();
       botMessage = inserted.data;
