@@ -84,7 +84,7 @@ async function createGeminiReply(instructions: string, prompt: string) {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: 220,
+        maxOutputTokens: 520,
         responseMimeType: "application/json",
         responseSchema: {
           type: "OBJECT",
@@ -112,7 +112,7 @@ async function createOpenAIReply(input: AssistantInput, instructions: string, pr
       safety_identifier: input.visitorId.slice(0, 64),
       instructions,
       input: prompt,
-      max_output_tokens: 220,
+      max_output_tokens: 520,
       text: {
         format: {
           type: "json_schema",
