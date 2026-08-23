@@ -47,11 +47,19 @@ export async function createCompanyReply(input: AssistantInput) {
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error?.message || "OpenAI no pudo responder");
+
+  const outputText = typeof result.output_text === "string"
+    ? result.output_text
+    : (result.output || [])
+        .flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
+        .find((item: { type?: string; text?: string }) => item.type === "output_text")
+        ?.text;
+
   try {
-    const parsed = JSON.parse(result.output_text || "{}");
+    if (!outputText) throw new Error("OpenAI devolvió una respuesta sin texto");
+    const parsed = JSON.parse(outputText);
     return { reply: String(parsed.reply || input.handoffMessage), handoff: Boolean(parsed.handoff) };
-  } catch {
-    return { reply: input.handoffMessage, handoff: true };
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : "No se pudo interpretar la respuesta de OpenAI");
   }
 }
-
