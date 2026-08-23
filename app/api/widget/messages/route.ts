@@ -66,14 +66,14 @@ export async function POST(request: Request) {
     ]);
     if (assistant?.enabled !== false) {
       const handoffMessage = assistant?.handoff_message || "Voy a transferir esta conversación a una persona del equipo para ayudarte mejor.";
-      let generated: { reply: string; handoff: boolean };
+      let generated: { reply: string; handoff: boolean; provider?: string };
       try {
         generated = await createCompanyReply({ company: tenant.name, assistantName: assistant?.assistant_name || "Asistente virtual", instructions: assistant?.instructions || "Responde con amabilidad y brevedad.", handoffMessage, knowledge: documents || [], history: (history || []).reverse(), message: text, visitorId });
       } catch (error) {
         console.error("[widget-ai] No se pudo generar la respuesta", error);
-        generated = { reply: handoffMessage, handoff: true };
+        generated = { reply: handoffMessage, handoff: true, provider: "fallback" };
       }
-      const inserted = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "outbound", sender_type: "bot", body: generated.reply, metadata: { source: "ai_assistant", handoff: generated.handoff } }).select("id, direction, body, created_at").single();
+      const inserted = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "outbound", sender_type: "bot", body: generated.reply, metadata: { source: "ai_assistant", provider: generated.provider || "unknown", handoff: generated.handoff } }).select("id, direction, body, created_at").single();
       botMessage = inserted.data;
       if (generated.handoff) await supabase.from("conversations").update({ handling_mode: "waiting_agent", status: "pending", last_message_at: new Date().toISOString() }).eq("id", conversation.id);
     }
