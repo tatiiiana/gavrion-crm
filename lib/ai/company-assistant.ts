@@ -13,13 +13,69 @@ type AssistantInput = {
 
 export async function createCompanyReply(input: AssistantInput) {
   const explicitHandoff = /\b(humano|persona|asesor|agente|encargado|queja|reclamo)\b/i.test(input.message);
-  if (explicitHandoff) return { reply: input.handoffMessage, handoff: true };
-  if (!process.env.OPENAI_API_KEY) return { reply: input.handoffMessage, handoff: true };
+  if (explicitHandoff) return { reply: input.handoffMessage, handoff: true, provider: "rule" };
 
   const knowledge = input.knowledge.length
     ? input.knowledge.map(item => `## ${item.title}\n${item.content}`).join("\n\n")
     : "No hay información empresarial cargada.";
   const history = input.history.slice(-10).map(item => `${item.direction === "inbound" ? "Cliente" : "Asistente"}: ${item.body || ""}`).join("\n");
+  const instructions = `Eres ${input.assistantName}, asistente de ${input.company}. ${input.instructions}\nResponde únicamente usando la base de conocimiento. No inventes precios, disponibilidad, políticas ni datos. Si la información no alcanza, si el cliente pide una persona o si el caso requiere decisión humana, activa la transferencia. Responde en español, con tono natural y en máximo 90 palabras.`;
+  const prompt = `BASE DE CONOCIMIENTO:\n${knowledge}\n\nCONVERSACIÓN RECIENTE:\n${history}\n\nNUEVO MENSAJE:\n${input.message}`;
+
+  const errors: string[] = [];
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const result = await createGeminiReply(instructions, prompt);
+      return { ...result, provider: "gemini" };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Gemini no pudo responder";
+      errors.push(`Gemini: ${detail}`);
+      console.warn("[assistant-gemini] Falló el proveedor principal", detail);
+    }
+  }
+
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      const result = await createOpenAIReply(input, instructions, prompt);
+      return { ...result, provider: "openai" };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "OpenAI no pudo responder";
+      errors.push(`OpenAI: ${detail}`);
+      console.warn("[assistant-openai] Falló el proveedor de respaldo", detail);
+    }
+  }
+
+  throw new Error(errors.join(" | ") || "No hay un proveedor de IA configurado");
+}
+
+async function createGeminiReply(instructions: string, prompt: string) {
+  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": process.env.GEMINI_API_KEY || "", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: instructions }] },
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: 220,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "OBJECT",
+          properties: { reply: { type: "STRING" }, handoff: { type: "BOOLEAN" } },
+          required: ["reply", "handoff"]
+        }
+      }
+    })
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error?.message || "Gemini no pudo responder");
+  const outputText = result.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
+  if (!outputText) throw new Error("Gemini devolvió una respuesta sin texto");
+  const parsed = JSON.parse(outputText);
+  return { reply: String(parsed.reply || ""), handoff: Boolean(parsed.handoff) };
+}
+
+async function createOpenAIReply(input: AssistantInput, instructions: string, prompt: string) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
@@ -27,8 +83,8 @@ export async function createCompanyReply(input: AssistantInput) {
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
       store: false,
       safety_identifier: input.visitorId.slice(0, 64),
-      instructions: `Eres ${input.assistantName}, asistente de ${input.company}. ${input.instructions}\nResponde únicamente usando la base de conocimiento. No inventes precios, disponibilidad, políticas ni datos. Si la información no alcanza, si el cliente pide una persona o si el caso requiere decisión humana, activa la transferencia. Responde en español, con tono natural y en máximo 90 palabras.`,
-      input: `BASE DE CONOCIMIENTO:\n${knowledge}\n\nCONVERSACIÓN RECIENTE:\n${history}\n\nNUEVO MENSAJE:\n${input.message}`,
+      instructions,
+      input: prompt,
       max_output_tokens: 220,
       text: {
         format: {
