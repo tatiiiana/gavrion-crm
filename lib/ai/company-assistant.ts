@@ -49,7 +49,7 @@ export async function createCompanyReply(input: AssistantInput) {
 }
 
 async function createGeminiReply(instructions: string, prompt: string) {
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
     headers: { "x-goog-api-key": process.env.GEMINI_API_KEY || "", "Content-Type": "application/json" },
