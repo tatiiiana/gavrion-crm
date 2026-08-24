@@ -77,29 +77,35 @@ async function createGeminiReply(instructions: string, prompt: string) {
     .replace(/^[`'\"]+|[`'\"]+$/g, "")
     .trim();
   const model = /^gemini-[a-z0-9.-]+$/i.test(configuredModel) ? configuredModel : "gemini-3.5-flash-lite";
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST",
-    headers: { "x-goog-api-key": process.env.GEMINI_API_KEY || "", "Content-Type": "application/json" },
-    body: JSON.stringify({
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const base = {
       systemInstruction: { parts: [{ text: instructions }] },
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        maxOutputTokens: 520,
-        responseMimeType: "application/json",
-        responseSchema: {
+  };
+  const structuredConfig = {
+    maxOutputTokens: 520,
+    responseMimeType: "application/json",
+    responseSchema: {
           type: "OBJECT",
           properties: { reply: { type: "STRING" }, handoff: { type: "BOOLEAN" }, request: requestSchema("gemini") },
           required: ["reply", "handoff", "request"]
-        }
-      }
-    })
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.message || "Gemini no pudo responder");
-  const outputText = result.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
-  if (!outputText) throw new Error("Gemini devolvió una respuesta sin texto");
-  const parsed = JSON.parse(outputText);
-  return { reply: String(parsed.reply || ""), handoff: Boolean(parsed.handoff), request: normalizeRequest(parsed.request) };
+    }
+  };
+  const attempt = async (generationConfig: Record<string, unknown>) => {
+    const response = await fetch(endpoint, { method: "POST", headers: { "x-goog-api-key": process.env.GEMINI_API_KEY || "", "Content-Type": "application/json" }, body: JSON.stringify({ ...base, generationConfig }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error?.message || `Gemini respondió ${response.status}`);
+    const outputText = result.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
+    if (!outputText) throw new Error(`Gemini no devolvió texto (${result.candidates?.[0]?.finishReason || "sin motivo"})`);
+    const parsed = JSON.parse(outputText);
+    return { reply: String(parsed.reply || ""), handoff: Boolean(parsed.handoff), request: normalizeRequest(parsed.request) };
+  };
+  try {
+    return await attempt(structuredConfig);
+  } catch (structuredError) {
+    console.warn("[assistant-gemini] Reintentando sin esquema estricto", structuredError instanceof Error ? structuredError.message : structuredError);
+    return await attempt({ maxOutputTokens: 520, responseMimeType: "application/json" });
+  }
 }
 
 async function createOpenAIReply(input: AssistantInput, instructions: string, prompt: string) {
@@ -154,7 +160,7 @@ function requestSchema(provider: "gemini" | "openai") {
     properties: {
       type: { ...type("string"), enum: ["none", "property_inquiry", "property_visit"] },
       ready: type("boolean"), customer_name: type("string"), phone: type("string"), email: type("string"),
-      intent: { ...type("string"), enum: ["", "buy", "rent", "sell"] }, property_type: type("string"), city: type("string"), zone: type("string"),
+      intent: provider === "gemini" ? type("string") : { ...type("string"), enum: ["", "buy", "rent", "sell"] }, property_type: type("string"), city: type("string"), zone: type("string"),
       budget_min: type("number"), budget_max: type("number"), bedrooms: type("integer"), property_reference: type("string"),
       date: type("string"), time: type("string"), party_size: type("integer"), notes: type("string")
     },
