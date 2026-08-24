@@ -5,6 +5,8 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  const { data: membership } = await supabase.from("memberships").select("role").eq("user_id", auth.user.id).limit(1).maybeSingle();
+  if (!membership || membership.role === "viewer") return NextResponse.json({ error: "Tu rol es únicamente de consulta" }, { status: 403 });
   const { conversationId, text } = await request.json();
   const body = String(text || "").trim().slice(0, 2000);
   if (!conversationId || !body) return NextResponse.json({ error: "Mensaje inválido" }, { status: 400 });
