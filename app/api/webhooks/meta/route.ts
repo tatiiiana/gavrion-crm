@@ -1,6 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
+import { runAutomations } from "@/lib/automations/engine";
+import { findMetaConnection, graphRequest } from "@/lib/meta/client";
 
 export const runtime = "nodejs";
 
@@ -36,7 +38,7 @@ export async function POST(request: Request) {
       const value = change.value || {};
       const phoneNumberId = value.metadata?.phone_number_id;
       if (!phoneNumberId) continue;
-      const { data: connection } = await supabase.from("channel_connections").select("tenant_id").eq("provider", "whatsapp").eq("external_account_id", phoneNumberId).eq("status", "active").maybeSingle();
+      const { data: connection } = await supabase.from("channel_connections").select("id, tenant_id").eq("provider", "whatsapp").eq("external_account_id", phoneNumberId).eq("status", "active").maybeSingle();
       if (!connection) continue;
       const tenantId = connection.tenant_id;
 
@@ -56,10 +58,35 @@ export async function POST(request: Request) {
           contact = created.data;
         }
         if (!contact) continue;
-        const { data: conversation } = await supabase.from("conversations").upsert({ tenant_id: tenantId, contact_id: contact.id, channel: "whatsapp", external_thread_id: phone, status: "open", last_message_at: new Date(Number(incoming.timestamp || 0) * 1000 || Date.now()).toISOString() }, { onConflict: "tenant_id,channel,external_thread_id" }).select("id").single();
+        const { data: conversation } = await supabase.from("conversations").upsert({ tenant_id: tenantId, contact_id: contact.id, channel: "whatsapp", channel_connection_id: connection.id, external_thread_id: phone, status: "open", last_message_at: new Date(Number(incoming.timestamp || 0) * 1000 || Date.now()).toISOString() }, { onConflict: "tenant_id,channel,external_thread_id" }).select("id").single();
         if (!conversation) continue;
-        await supabase.from("messages").insert({ tenant_id: tenantId, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: messageText(incoming), external_message_id: incoming.id, metadata: { type: incoming.type, raw: incoming } });
+        const text = messageText(incoming);
+        await supabase.from("messages").insert({ tenant_id: tenantId, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: incoming.id, metadata: { type: incoming.type, raw: incoming } });
+        await runAutomations({ tenantId, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profile, channel: "whatsapp", text } });
       }
+    }
+
+    for (const event of entry.messaging || []) {
+      if (!event.sender?.id || event.message?.is_echo || (!event.message && !event.postback)) continue;
+      const accountId = String(entry.id || "");
+      let socialConnection = await findMetaConnection("instagram", accountId);
+      if (!socialConnection) socialConnection = await findMetaConnection("facebook", accountId);
+      if (!socialConnection) continue;
+      const provider = socialConnection.provider as "facebook" | "instagram";
+      const senderId = String(event.sender.id);
+      const text = String(event.message?.text || event.postback?.title || event.postback?.payload || "[Mensaje multimedia]");
+      let profileName = senderId;
+      try { const profile = await graphRequest(`${senderId}?fields=name,username`, socialConnection.accessToken); profileName = profile.name || profile.username || senderId; } catch { /* El permiso de perfil puede variar. */ }
+      let { data: contact } = await supabase.from("contacts").select("id").eq("tenant_id", socialConnection.tenant_id).eq("source", provider).contains("metadata", { meta_user_id: senderId }).maybeSingle();
+      if (!contact) { const created = await supabase.from("contacts").insert({ tenant_id: socialConnection.tenant_id, full_name: profileName, source: provider, status: "lead", metadata: { meta_user_id: senderId } }).select("id").single(); contact = created.data; }
+      if (!contact) continue;
+      const { data: conversation } = await supabase.from("conversations").upsert({ tenant_id: socialConnection.tenant_id, contact_id: contact.id, channel: provider, channel_connection_id: socialConnection.id, external_thread_id: senderId, status: "open", last_message_at: new Date(Number(event.timestamp || Date.now())).toISOString() }, { onConflict: "tenant_id,channel,external_thread_id" }).select("id").single();
+      if (!conversation) continue;
+      const externalId = event.message?.mid || `${provider}-${accountId}-${senderId}-${event.timestamp}`;
+      const { data: duplicate } = await supabase.from("messages").select("id").eq("tenant_id", socialConnection.tenant_id).eq("external_message_id", externalId).maybeSingle();
+      if (duplicate) continue;
+      await supabase.from("messages").insert({ tenant_id: socialConnection.tenant_id, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: externalId, metadata: { provider, raw: event } });
+      await runAutomations({ tenantId: socialConnection.tenant_id, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profileName, channel: provider, text } });
     }
   }
   await supabase.from("webhook_events").update({ processed_at: new Date().toISOString() }).eq("provider", "meta").eq("external_id", eventId);
