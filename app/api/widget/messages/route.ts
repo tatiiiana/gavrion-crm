@@ -91,8 +91,28 @@ export async function POST(request: Request) {
           propertyId = property?.id || null;
         }
         if (serviceRequest.type === "property_inquiry" && serviceRequest.customer_name && serviceRequest.phone && serviceRequest.intent && (serviceRequest.property_reference || serviceRequest.property_type)) {
-          const saved = await supabase.from("property_inquiries").upsert({ tenant_id: tenant.id, conversation_id: conversation.id, contact_id: contact.id, property_id: propertyId, customer_name: serviceRequest.customer_name, phone: serviceRequest.phone, email: serviceRequest.email || null, intent: serviceRequest.intent, property_type: serviceRequest.property_type || null, city: serviceRequest.city || null, zone: serviceRequest.zone || null, budget_min: serviceRequest.budget_min || null, budget_max: serviceRequest.budget_max || null, bedrooms: serviceRequest.bedrooms || null, notes: [serviceRequest.property_reference ? `Referencia: ${serviceRequest.property_reference}` : "", serviceRequest.notes].filter(Boolean).join(" · ") || null, status: "new" }, { onConflict: "conversation_id" });
+          const saved = await supabase.from("property_inquiries").upsert({ tenant_id: tenant.id, conversation_id: conversation.id, contact_id: contact.id, property_id: propertyId, customer_name: serviceRequest.customer_name, phone: serviceRequest.phone, email: serviceRequest.email || null, intent: serviceRequest.intent, property_type: serviceRequest.property_type || null, city: serviceRequest.city || null, zone: serviceRequest.zone || null, budget_min: serviceRequest.budget_min || null, budget_max: serviceRequest.budget_max || null, bedrooms: serviceRequest.bedrooms || null, notes: [serviceRequest.property_reference ? `Referencia: ${serviceRequest.property_reference}` : "", serviceRequest.notes].filter(Boolean).join(" · ") || null, status: "qualified", qualified_at: new Date().toISOString() }, { onConflict: "conversation_id" }).select("id, deal_id, follow_up_task_id").single();
           requestError = saved.error;
+          if (!saved.error && saved.data) {
+            await supabase.from("contacts").update({ full_name: serviceRequest.customer_name, phone: serviceRequest.phone, ...(serviceRequest.email ? { email: serviceRequest.email } : {}), status: "lead" }).eq("id", contact.id).eq("tenant_id", tenant.id);
+            const property = propertyId ? (properties || []).find(item => item.reference?.toLowerCase() === serviceRequest.property_reference.toLowerCase()) : null;
+            const estimatedValue = Number(serviceRequest.budget_max || property?.price || 0);
+            const subject = serviceRequest.property_reference || serviceRequest.property_type || "propiedad";
+            let dealId = saved.data.deal_id as string | null;
+            let taskId = saved.data.follow_up_task_id as string | null;
+            if (!dealId) {
+              const deal = await supabase.from("deals").insert({ tenant_id: tenant.id, contact_id: contact.id, title: `${serviceRequest.intent === "sell" ? "Captación" : "Interés"}: ${subject} · ${serviceRequest.customer_name}`, stage: "new", value: estimatedValue, currency: property?.currency || "HNL" }).select("id").single();
+              if (deal.error) requestError = deal.error;
+              else dealId = deal.data.id;
+            }
+            if (!requestError && !taskId) {
+              const dueAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+              const task = await supabase.from("tasks").insert({ tenant_id: tenant.id, title: `Contactar a ${serviceRequest.customer_name} por ${subject}`, due_at: dueAt }).select("id").single();
+              if (task.error) requestError = task.error;
+              else taskId = task.data.id;
+            }
+            if (!requestError) await supabase.from("property_inquiries").update({ deal_id: dealId, follow_up_task_id: taskId }).eq("id", saved.data.id).eq("tenant_id", tenant.id);
+          }
         } else if (serviceRequest.type === "property_visit" && serviceRequest.customer_name && serviceRequest.phone && serviceRequest.property_reference && /^\d{4}-\d{2}-\d{2}$/.test(serviceRequest.date) && /^\d{2}:\d{2}/.test(serviceRequest.time) && serviceRequest.party_size > 0) {
           const saved = await supabase.from("property_visits").upsert({ tenant_id: tenant.id, conversation_id: conversation.id, contact_id: contact.id, property_id: propertyId, property_reference: serviceRequest.property_reference, customer_name: serviceRequest.customer_name, phone: serviceRequest.phone, requested_date: serviceRequest.date, requested_time: serviceRequest.time.slice(0, 5), party_size: serviceRequest.party_size, notes: serviceRequest.notes || null, status: "pending" }, { onConflict: "conversation_id" });
           requestError = saved.error;
