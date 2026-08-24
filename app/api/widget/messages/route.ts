@@ -68,13 +68,19 @@ export async function POST(request: Request) {
     if (assistant?.enabled !== false) {
       const handoffMessage = assistant?.handoff_message || "Voy a transferir esta conversación a una persona del equipo para ayudarte mejor.";
       let generated: { reply: string; handoff: boolean; provider?: string; request?: AssistantRequest };
+      const inventory = (properties || []).map(property => `${property.reference || "Sin referencia"}: ${property.title}; ${property.property_type}; ${property.operation === "sale" ? "venta" : "alquiler"}; ${property.price} ${property.currency}; ${[property.city, property.zone, property.address].filter(Boolean).join(", ")}; ${property.bedrooms ?? "-"} habitaciones; ${property.bathrooms ?? "-"} baños; ${property.area_sqm ?? "-"} m². ${property.description || ""}`).join("\n");
+      const knowledge = [...(documents || []), ...(inventory ? [{ title: "Inventario inmobiliario disponible", content: inventory }] : [])];
       try {
-        const inventory = (properties || []).map(property => `${property.reference || "Sin referencia"}: ${property.title}; ${property.property_type}; ${property.operation === "sale" ? "venta" : "alquiler"}; ${property.price} ${property.currency}; ${[property.city, property.zone, property.address].filter(Boolean).join(", ")}; ${property.bedrooms ?? "-"} habitaciones; ${property.bathrooms ?? "-"} baños; ${property.area_sqm ?? "-"} m². ${property.description || ""}`).join("\n");
-        const knowledge = [...(documents || []), ...(inventory ? [{ title: "Inventario inmobiliario disponible", content: inventory }] : [])];
         generated = await createCompanyReply({ company: tenant.name, assistantName: assistant?.assistant_name || "Asistente virtual", instructions: assistant?.instructions || "Responde con amabilidad y brevedad.", handoffMessage, knowledge, history: (history || []).reverse(), message: text, visitorId });
       } catch (error) {
         console.error("[widget-ai] No se pudo generar la respuesta", error);
-        generated = { reply: "En este momento el asistente está teniendo una dificultad temporal. Por favor, intenta nuevamente en unos minutos.", handoff: false, provider: "fallback" };
+        const available = properties || [];
+        const matching = available.filter(property => {
+          const search = `${property.title} ${property.property_type} ${property.operation} ${property.city} ${property.zone || ""}`.toLowerCase();
+          return text.toLowerCase().split(/\s+/).some(term => term.length > 3 && search.includes(term));
+        }).slice(0, 3);
+        const options = (matching.length ? matching : available.slice(0, 3)).map(property => `${property.reference || "Sin referencia"}: ${property.title}, ${property.operation === "sale" ? "venta" : "alquiler"} por ${property.price} ${property.currency}`).join("; ");
+        generated = { reply: options ? `Estas son algunas opciones disponibles: ${options}. ¿Cuál te interesa o qué ciudad, presupuesto y tipo de propiedad buscas?` : "Con gusto te ayudo a encontrar una propiedad. ¿Deseas comprar o alquilar, en qué ciudad y cuál es tu presupuesto aproximado?", handoff: false, provider: "catalog_fallback" };
       }
       const serviceRequest = generated.request;
       if (serviceRequest?.ready) {
