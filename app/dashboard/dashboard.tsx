@@ -7,7 +7,8 @@ import { createClientSupabase } from "@/lib/supabase/client";
 const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últimos 30 días", year: "este año" };
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
 type ChatMessage = { id: string; text: string; direction: "inbound" | "outbound"; createdAt: string };
-type Thread = { id: string; name: string; channel: string; preview: string; contactId: string; externalThreadId: string; handlingMode: "bot" | "waiting_agent" | "human"; messages: ChatMessage[] };
+type Thread = { id: string; name: string; channel: string; preview: string; contactId: string; externalThreadId: string; handlingMode: "bot" | "waiting_agent" | "human"; assignedTo: string; unread: number; messages: ChatMessage[] };
+type TeamMember = { id: string; name: string; email: string; role: "owner" | "admin" | "agent" | "viewer" };
 type Property = { id: string; reference: string; title: string; property_type: string; operation: "sale" | "rent"; price: number; currency: string; city: string; zone: string | null; bedrooms: number | null; status: "available" | "reserved" | "sold" | "rented" | "inactive" };
 type PropertyInquiry = { id: string; customer_name: string; phone: string; intent: "buy" | "rent" | "sell"; property_type: string | null; city: string | null; zone: string | null; budget_max: number | null; bedrooms: number | null; notes: string | null; status: "new" | "contacted" | "qualified" | "closed" | "discarded" };
 type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" };
@@ -17,6 +18,11 @@ export default function Dashboard() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [greeting, setGreeting] = useState("Hola");
   const [account, setAccount] = useState({ name: "Usuario", email: "", initials: "U", role: "Miembro", company: "" });
+  const [currentRole, setCurrentRole] = useState("");
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<TeamMember["role"]>("agent");
+  const [inviting, setInviting] = useState(false);
   const [tenantId, setTenantId] = useState("");
   const [tenantLogoUrl, setTenantLogoUrl] = useState("");
   const [brandingName, setBrandingName] = useState("");
@@ -97,6 +103,7 @@ export default function Dashboard() {
         const email = user.email || "";
         const name = String(user.user_metadata?.full_name || email.split("@")[0] || "Usuario");
         const { data: membership } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id).limit(1).maybeSingle();
+        setCurrentRole(membership?.role || "");
         let company = String(user.user_metadata?.company_name || "");
         if (membership?.tenant_id) {
           setTenantId(membership.tenant_id);
@@ -124,7 +131,7 @@ export default function Dashboard() {
             supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
             supabase.from("tasks").select("id, title, due_at, completed_at").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }),
             supabase.from("deals").select("id, title, stage, value, currency, contact_id, expected_close_date").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
-            supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, handling_mode, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }),
+            supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, handling_mode, assigned_to, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }),
             supabase.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: true }),
             supabase.from("properties").select("id, reference, title, property_type, operation, price, currency, city, zone, bedrooms, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
             supabase.from("property_inquiries").select("id, customer_name, phone, intent, property_type, city, zone, budget_max, bedrooms, notes, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
@@ -146,7 +153,7 @@ export default function Dashboard() {
             setThreads((conversationsResult.data || []).map(conversation => {
               const conversationMessages: ChatMessage[] = allMessages.filter(item => item.conversation_id === conversation.id).map(item => ({ id: item.id, text: item.body || "[Mensaje multimedia]", direction: item.direction as "inbound" | "outbound", createdAt: item.created_at }));
               const contact = loadedContacts.find(item => item.id === conversation.contact_id);
-              return { id: conversation.id, name: contact?.name || conversation.external_thread_id || "Contacto", channel: channelLabels[conversation.channel] || conversation.channel, preview: conversationMessages.at(-1)?.text || "Sin mensajes", contactId: conversation.contact_id || "", externalThreadId: conversation.external_thread_id || "", handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"], messages: conversationMessages };
+              return { id: conversation.id, name: contact?.name || conversation.external_thread_id || "Contacto", channel: channelLabels[conversation.channel] || conversation.channel, preview: conversationMessages.at(-1)?.text || "Sin mensajes", contactId: conversation.contact_id || "", externalThreadId: conversation.external_thread_id || "", handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"], assignedTo: conversation.assigned_to || "", unread: 0, messages: conversationMessages };
             }));
           }
         } else {
@@ -155,6 +162,7 @@ export default function Dashboard() {
         const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase();
         const roleLabels: Record<string, string> = { owner: "Propietario", admin: "Administrador", agent: "Agente", viewer: "Consulta" };
         setAccount({ name, email, initials: initials || "U", role: roleLabels[membership?.role || ""] || "Miembro", company });
+        fetch("/api/team").then(response => response.ok ? response.json() : []).then(data => setTeamMembers(Array.isArray(data) ? data : [])).catch(() => undefined);
         setDataLoading(false);
         setAuthReady(true);
       }
@@ -179,15 +187,17 @@ export default function Dashboard() {
     let active = true;
 
     async function refreshConversations() {
-      const [contactsResult, conversationsResult, messagesResult] = await Promise.all([
+      const [contactsResult, conversationsResult, messagesResult, readsResult] = await Promise.all([
         client.from("contacts").select("id, full_name").eq("tenant_id", tenantId),
-        client.from("conversations").select("id, contact_id, channel, external_thread_id, handling_mode, last_message_at").eq("tenant_id", tenantId).order("last_message_at", { ascending: false }),
-        client.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: true })
+        client.from("conversations").select("id, contact_id, channel, external_thread_id, handling_mode, assigned_to, last_message_at").eq("tenant_id", tenantId).order("last_message_at", { ascending: false }),
+        client.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: true }),
+        client.from("conversation_reads").select("conversation_id, last_read_at").eq("tenant_id", tenantId).eq("user_id", userId)
       ]);
       if (!active || contactsResult.error || conversationsResult.error || messagesResult.error) return;
 
       const names = new Map((contactsResult.data || []).map(contact => [contact.id, contact.full_name]));
       const allMessages = messagesResult.data || [];
+      const reads = new Map((readsResult.data || []).map(item => [item.conversation_id, item.last_read_at]));
       const channelLabels: Record<string, string> = { whatsapp: "WhatsApp", instagram: "Instagram", facebook: "Facebook", web: "Chat web" };
       const nextThreads: Thread[] = (conversationsResult.data || []).map(conversation => {
         const conversationMessages: ChatMessage[] = allMessages
@@ -201,6 +211,8 @@ export default function Dashboard() {
           contactId: conversation.contact_id || "",
           externalThreadId: conversation.external_thread_id || "",
           handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"],
+          assignedTo: conversation.assigned_to || "",
+          unread: conversationMessages.filter(item => item.direction === "inbound" && new Date(item.createdAt) > new Date(reads.get(conversation.id) || 0)).length,
           messages: conversationMessages
         };
       });
@@ -211,8 +223,15 @@ export default function Dashboard() {
     const realtime = client
       .channel(`crm-conversations-${tenantId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `tenant_id=eq.${tenantId}` }, refreshConversations)
-      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `tenant_id=eq.${tenantId}` }, refreshConversations)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `tenant_id=eq.${tenantId}` }, payload => {
+        const incoming = payload.new as { direction?: string; body?: string };
+        if (incoming.direction === "inbound" && document.hidden && "Notification" in window && Notification.permission === "granted") new Notification("Nuevo mensaje en Gavrion", { body: incoming.body || "Tienes una conversación nueva." });
+        void refreshConversations();
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages", filter: `tenant_id=eq.${tenantId}` }, refreshConversations)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversation_reads", filter: `tenant_id=eq.${tenantId}` }, refreshConversations)
       .subscribe();
+    void refreshConversations();
     const polling = window.setInterval(refreshConversations, 8_000);
 
     return () => {
@@ -220,7 +239,7 @@ export default function Dashboard() {
       window.clearInterval(polling);
       void client.removeChannel(realtime);
     };
-  }, [tenantId]);
+  }, [tenantId, userId]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -391,6 +410,42 @@ export default function Dashboard() {
     setThreads(current => current.map((item, index) => index === selectedThread ? { ...item, handlingMode: result.handling_mode } : item));
     showNotice("success", mode === "human" ? "Ahora atiende una persona." : "El asistente automático fue reactivado.");
   }
+
+  async function assignConversation(assignedTo: string) {
+    const thread = threads[selectedThread];
+    if (!thread) return;
+    const response = await fetch("/api/conversations/assignment", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: thread.id, assignedTo }) });
+    const result = await response.json();
+    if (!response.ok) { showNotice("error", result.error || "No se pudo asignar la conversación."); return; }
+    setThreads(current => current.map(item => item.id === thread.id ? { ...item, assignedTo: result.assigned_to || "", handlingMode: result.handling_mode } : item));
+    showNotice("success", assignedTo ? "Conversación asignada." : "Conversación devuelta al asistente.");
+  }
+
+  async function inviteMember(event: FormEvent) {
+    event.preventDefault();
+    if (!inviteEmail.trim() || inviting) return;
+    setInviting(true);
+    const response = await fetch("/api/team", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: inviteEmail, role: inviteRole }) });
+    const result = await response.json();
+    setInviting(false);
+    if (!response.ok) { showNotice("error", result.error || "No se pudo agregar el integrante."); return; }
+    setTeamMembers(current => current.some(member => member.id === result.id) ? current.map(member => member.id === result.id ? result : member) : [...current, result]);
+    setInviteEmail(""); showNotice("success", "Integrante agregado. Si es una cuenta nueva recibirá una invitación por correo.");
+  }
+
+  async function changeMemberRole(member: TeamMember, role: TeamMember["role"]) {
+    const response = await fetch("/api/team", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: member.id, role }) });
+    const result = await response.json();
+    if (!response.ok) { showNotice("error", result.error || "No se pudo cambiar el rol."); return; }
+    setTeamMembers(current => current.map(item => item.id === member.id ? { ...item, role } : item));
+    showNotice("success", "Rol actualizado.");
+  }
+
+  async function enableNotifications() {
+    if (!("Notification" in window)) { showNotice("error", "Este navegador no admite notificaciones."); return; }
+    const permission = await Notification.requestPermission();
+    showNotice(permission === "granted" ? "success" : "error", permission === "granted" ? "Notificaciones activadas." : "El navegador no autorizó las notificaciones.");
+  }
   async function saveProperty(event: FormEvent) {
     event.preventDefault();
     const price = Number(propertyPrice);
@@ -414,7 +469,7 @@ export default function Dashboard() {
     else setPropertyVisits(current => current.map(item => item.id === id ? { ...item, status: status as PropertyVisit["status"] } : item));
     showNotice("success", "Estado actualizado.");
   }
-  const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", inmobiliaria: "Gestión inmobiliaria", contactos: "Contactos", pipeline: "Pipeline comercial", automatizaciones: "Automatizaciones", reportes: "Reportes", configuracion: "Configuración" };
+  const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", inmobiliaria: "Gestión inmobiliaria", contactos: "Contactos", pipeline: "Pipeline comercial", equipo: "Equipo", automatizaciones: "Automatizaciones", reportes: "Reportes", configuracion: "Configuración" };
   const globalResults = useMemo(() => {
     const query = globalQuery.trim().toLowerCase();
     if (!query) return [];
@@ -480,6 +535,7 @@ export default function Dashboard() {
   }
 
   const currentThread = threads[selectedThread] || null;
+  const totalUnread = threads.reduce((total, thread) => total + thread.unread, 0);
   const visibleMessages = currentThread?.messages.slice(-visibleMessageCount) || [];
   const hasOlderMessages = Boolean(currentThread && currentThread.messages.length > visibleMessageCount);
 
@@ -502,6 +558,14 @@ export default function Dashboard() {
     if (firstRender || wasNearBottom) window.requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
   }, [currentThread?.messages]);
 
+  useEffect(() => {
+    if (view !== "conversaciones" || !currentThread?.id || !tenantId || !userId || currentThread.unread === 0) return;
+    const supabase = createClientSupabase();
+    if (!supabase) return;
+    void supabase.from("conversation_reads").upsert({ tenant_id: tenantId, conversation_id: currentThread.id, user_id: userId, last_read_at: new Date().toISOString() }, { onConflict: "conversation_id,user_id" });
+    setThreads(current => current.map(item => item.id === currentThread.id ? { ...item, unread: 0 } : item));
+  }, [view, currentThread?.id, currentThread?.unread, tenantId, userId]);
+
   function loadOlderMessages() {
     const container = messagesRef.current;
     const previousHeight = container?.scrollHeight || 0;
@@ -517,7 +581,7 @@ export default function Dashboard() {
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand gavrion-brand tenant-brand">{tenantLogoUrl && !logoFailed ? <img className="tenant-logo" src={tenantLogoUrl} alt={`Logo de ${account.company || "la empresa"}`} onError={()=>setLogoFailed(true)} /> : <span className="brand-mark">{(account.company || "E").charAt(0).toUpperCase()}</span>}<span>{account.company || "Mi empresa"}</span></div>
-      <nav className="nav">{[["inicio","⌂","Inicio"],["conversaciones","◫","Conversaciones"],["inmobiliaria","▤","Inmobiliaria"],["contactos","♙","Contactos"],["pipeline","▦","Pipeline"],["automatizaciones","⌁","Automatizaciones"],["reportes","⌗","Reportes"]].map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&<i aria-label={`${threads.length} conversaciones`}>{threads.length}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
+      <nav className="nav">{[["inicio","⌂","Inicio"],["conversaciones","◫","Conversaciones"],["inmobiliaria","▤","Inmobiliaria"],["contactos","♙","Contactos"],["pipeline","▦","Pipeline"],["equipo","♧","Equipo"],["automatizaciones","⌁","Automatizaciones"],["reportes","⌗","Reportes"]].map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&totalUnread>0&&<i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
       <div className="sidebar-bottom"><button onClick={()=>navigate("configuracion")} className={`nav-item ${view==="configuracion"?"active":""}`}><span>⚙</span>Configuración</button><div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
     </aside>
     <main className="main">
@@ -542,7 +606,20 @@ export default function Dashboard() {
         </div>
       </section>}
 
-      {view === "conversaciones" && <section className="view active"><div className="section-heading"><div><h2>Bandeja unificada</h2><p>Conversaciones atendidas por el asistente y por el equipo.</p></div></div>{currentThread ? <div className="inbox-layout"><aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span><time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time></button>)}</aside><article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel} · {currentThread.handlingMode==="waiting_agent"?"esperando agente":currentThread.handlingMode==="human"?"atención humana":"asistente activo"}</small></div></div><div className="messages" ref={messagesRef}>{hasOlderMessages&&<button type="button" className="load-older" onClick={loadOlderMessages}>Cargar 50 mensajes anteriores</button>}{visibleMessages.map((item,index)=>{const currentDate=new Date(item.createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"});const previousDate=index?new Date(visibleMessages[index-1].createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"}):"";return <span className="message-group" key={item.id}>{currentDate!==previousDate&&<span className="message-date">{currentDate}</span>}<span className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></span></span>})}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article><aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Atención</h4><span className={`tag handling-${currentThread.handlingMode}`}>{currentThread.handlingMode==="waiting_agent"?"Requiere agente":currentThread.handlingMode==="human"?"Atención humana":"Asistente activo"}</span><div className="handoff-actions">{currentThread.handlingMode!=="human"&&<button className="primary-button" onClick={()=>setConversationMode("human")}>Tomar conversación</button>}{currentThread.handlingMode!=="bot"&&<button className="secondary-button" onClick={()=>setConversationMode("bot")}>Devolver al asistente</button>}</div></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside></div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando llegue el primer mensaje aparecerá automáticamente en esta bandeja.</p></div>}</section>}
+      {view === "conversaciones" && <section className="view active">
+        <div className="section-heading"><div><h2>Bandeja unificada</h2><p>{totalUnread ? `${totalUnread} mensaje${totalUnread===1?"":"s"} sin leer` : "Todas las conversaciones están al día"}.</p></div><button className="secondary-button" onClick={enableNotifications}>Activar notificaciones</button></div>
+        {currentThread ? <div className="inbox-layout">
+          <aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span>{thread.unread>0?<i className="unread-badge">{thread.unread}</i>:<time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time>}</button>)}</aside>
+          <article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel} · {currentThread.handlingMode==="waiting_agent"?"esperando agente":currentThread.handlingMode==="human"?"atención humana":"asistente activo"}</small></div></div><div className="messages" ref={messagesRef}>{hasOlderMessages&&<button type="button" className="load-older" onClick={loadOlderMessages}>Cargar 50 mensajes anteriores</button>}{visibleMessages.map((item,index)=>{const currentDate=new Date(item.createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"});const previousDate=index?new Date(visibleMessages[index-1].createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"}):"";return <span className="message-group" key={item.id}>{currentDate!==previousDate&&<span className="message-date">{currentDate}</span>}<span className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></span></span>})}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article>
+          <aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Atención</h4><span className={`tag handling-${currentThread.handlingMode}`}>{currentThread.handlingMode==="waiting_agent"?"Requiere agente":currentThread.handlingMode==="human"?"Atención humana":"Asistente activo"}</span><div className="handoff-actions">{currentRole!=="viewer"&&currentThread.handlingMode!=="human"&&<button className="primary-button" onClick={()=>setConversationMode("human")}>Tomar conversación</button>}{currentRole!=="viewer"&&currentThread.handlingMode!=="bot"&&<button className="secondary-button" onClick={()=>setConversationMode("bot")}>Devolver al asistente</button>}</div></div><div className="detail-group"><h4>Responsable</h4><select disabled={currentRole==="viewer"} className="select assignment-select" value={currentThread.assignedTo} onChange={event=>assignConversation(event.target.value)}><option value="">Asistente automático</option>{teamMembers.filter(member=>member.role!=="viewer").map(member=><option key={member.id} value={member.id}>{member.name}</option>)}</select></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside>
+        </div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando llegue el primer mensaje aparecerá automáticamente en esta bandeja.</p></div>}
+      </section>}
+
+      {view === "equipo" && <section className="view active">
+        <div className="section-heading"><div><h2>Equipo y permisos</h2><p>Gestiona quién accede al CRM y qué conversaciones atiende.</p></div></div>
+        {["owner","admin"].includes(currentRole) && <form className="team-invite panel" onSubmit={inviteMember}><label>Correo del integrante<input required type="email" value={inviteEmail} onChange={event=>setInviteEmail(event.target.value)} placeholder="asesor@empresa.com" /></label><label>Rol<select className="select" value={inviteRole} onChange={event=>setInviteRole(event.target.value as TeamMember["role"])}><option value="admin">Administrador</option><option value="agent">Agente</option><option value="viewer">Consulta</option></select></label><button className="primary-button" disabled={inviting}>{inviting?"Enviando…":"Invitar integrante"}</button></form>}
+        <article className="panel table-panel team-table"><div className="panel-header"><div><h3>Integrantes</h3><p>{teamMembers.length} usuario{teamMembers.length===1?"":"s"} en esta empresa</p></div></div><div className="table-scroll"><table><thead><tr><th>Integrante</th><th>Correo</th><th>Rol</th></tr></thead><tbody>{teamMembers.map(member=><tr key={member.id}><td><div className="contact-cell"><span className="avatar">{member.name.charAt(0).toUpperCase()}</span><span><strong>{member.name}</strong>{member.id===userId&&<small>Tu cuenta</small>}</span></div></td><td>{member.email}</td><td>{member.role==="owner"?<span className="status client">Propietario</span>:<select className="select team-role" value={member.role} disabled={!(["owner","admin"].includes(currentRole))} onChange={event=>changeMemberRole(member,event.target.value as TeamMember["role"])}><option value="admin">Administrador</option><option value="agent">Agente</option><option value="viewer">Consulta</option></select>}</td></tr>)}</tbody></table></div></article>
+      </section>}
 
       {view === "inmobiliaria" && <section className="view active"><div className="section-heading"><div><h2>Gestión inmobiliaria</h2><p>Inventario, clientes interesados y visitas registradas por el asistente.</p></div><button className="primary-button" onClick={()=>setShowPropertyForm(true)}>＋ Nuevo inmueble</button></div>{showPropertyForm&&<form className="inline-create property-create" onSubmit={saveProperty}><input required autoFocus value={propertyReference} onChange={e=>setPropertyReference(e.target.value)} placeholder="Referencia: MET-001"/><input required value={propertyTitle} onChange={e=>setPropertyTitle(e.target.value)} placeholder="Título del inmueble"/><select className="select" value={propertyType} onChange={e=>setPropertyType(e.target.value)}><option value="house">Casa</option><option value="apartment">Apartamento</option><option value="land">Terreno</option><option value="commercial">Local comercial</option><option value="office">Oficina</option><option value="other">Otro</option></select><select className="select" value={propertyOperation} onChange={e=>setPropertyOperation(e.target.value as "sale"|"rent")}><option value="sale">Venta</option><option value="rent">Alquiler</option></select><input required type="number" min="0" value={propertyPrice} onChange={e=>setPropertyPrice(e.target.value)} placeholder="Precio HNL"/><input required value={propertyCity} onChange={e=>setPropertyCity(e.target.value)} placeholder="Ciudad"/><input value={propertyZone} onChange={e=>setPropertyZone(e.target.value)} placeholder="Zona o colonia"/><input type="number" min="0" value={propertyBedrooms} onChange={e=>setPropertyBedrooms(e.target.value)} placeholder="Habitaciones"/><button className="primary-button">Guardar</button><button type="button" className="ghost-button" onClick={()=>setShowPropertyForm(false)}>Cancelar</button></form>}<div className="requests-grid"><article className="panel table-panel"><div className="panel-header"><div><h3>Propiedades</h3><p>{properties.filter(item=>item.status==="available").length} disponibles</p></div></div><div className="table-scroll"><table><thead><tr><th>Inmueble</th><th>Ubicación</th><th>Precio</th><th>Estado</th></tr></thead><tbody>{properties.length?properties.map(item=><tr key={item.id}><td><strong>{item.reference} · {item.title}</strong><small>{item.property_type} · {item.operation==="sale"?"Venta":"Alquiler"}</small></td><td>{item.city}{item.zone&&<small>{item.zone}</small>}</td><td>{new Intl.NumberFormat("es-HN",{style:"currency",currency:item.currency||"HNL",maximumFractionDigits:0}).format(item.price)}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("property",item.id,e.target.value)}><option value="available">Disponible</option><option value="reserved">Reservada</option><option value="sold">Vendida</option><option value="rented">Alquilada</option><option value="inactive">Inactiva</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay inmuebles registrados.</td></tr>}</tbody></table></div></article><article className="panel table-panel"><div className="panel-header"><div><h3>Clientes interesados</h3><p>{propertyInquiries.filter(item=>item.status==="new").length} nuevos</p></div></div><div className="table-scroll"><table><thead><tr><th>Cliente</th><th>Búsqueda</th><th>Presupuesto</th><th>Estado</th></tr></thead><tbody>{propertyInquiries.length?propertyInquiries.map(item=><tr key={item.id}><td><strong>{item.customer_name}</strong><small>{item.phone}</small></td><td>{item.intent==="buy"?"Compra":item.intent==="rent"?"Alquiler":"Venta"} · {item.property_type||"Inmueble"}<small>{[item.city,item.zone].filter(Boolean).join(" · ")||"Sin ubicación"}{item.bedrooms?` · ${item.bedrooms} hab.`:""}</small></td><td>{item.budget_max?new Intl.NumberFormat("es-HN",{style:"currency",currency:"HNL",maximumFractionDigits:0}).format(item.budget_max):"Por definir"}{item.notes&&<small>{item.notes}</small>}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("inquiry",item.id,e.target.value)}><option value="new">Nuevo</option><option value="contacted">Contactado</option><option value="qualified">Calificado</option><option value="closed">Cerrado</option><option value="discarded">Descartado</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay interesados.</td></tr>}</tbody></table></div></article><article className="panel table-panel"><div className="panel-header"><div><h3>Solicitudes de visita</h3><p>{propertyVisits.filter(item=>item.status==="pending").length} pendientes</p></div></div><div className="table-scroll"><table><thead><tr><th>Cliente</th><th>Propiedad</th><th>Fecha</th><th>Estado</th></tr></thead><tbody>{propertyVisits.length?propertyVisits.map(item=><tr key={item.id}><td><strong>{item.customer_name}</strong><small>{item.phone}</small></td><td>{item.property_reference}<small>{item.party_size} visitante{item.party_size===1?"":"s"}</small></td><td>{new Date(`${item.requested_date}T00:00:00`).toLocaleDateString("es-HN")} · {item.requested_time.slice(0,5)}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("visit",item.id,e.target.value)}><option value="pending">Pendiente</option><option value="confirmed">Confirmada</option><option value="completed">Completada</option><option value="cancelled">Cancelada</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay visitas solicitadas.</td></tr>}</tbody></table></div></article></div></section>}
 
