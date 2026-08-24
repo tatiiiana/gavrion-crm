@@ -3,6 +3,8 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Contact, Deal, DealStage, Period, Task } from "@/types/crm";
 import { createClientSupabase } from "@/lib/supabase/client";
+import { AutomationsView } from "./automations";
+import { ReportsView } from "./reports";
 
 const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últimos 30 días", year: "este año" };
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
@@ -326,6 +328,7 @@ export default function Dashboard() {
     if (error) { showNotice("error", `No se pudo guardar el contacto: ${error.message}`); return; }
     const saved: Contact = { id: data.id, name: data.full_name, email: data.email || "", phone: data.phone || "", company: data.company || "", status: contactStatus };
     setContacts(current => editingContactId ? current.map(contact => contact.id === editingContactId ? saved : contact) : [saved, ...current]);
+    if (!editingContactId) void fetch("/api/automations/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "contact_created", payload: { contactId: saved.id, contactName: saved.name, status: data.status } }) });
     setMetricsVersion(version => version + 1);
     closeContactForm();
     showNotice("success", editingContactId ? "Contacto actualizado." : "Contacto guardado en Supabase.");
@@ -371,7 +374,7 @@ export default function Dashboard() {
     if (!supabase) return;
     const { error } = await supabase.from("deals").update({ stage: nextStage }).eq("id", deal.id).eq("tenant_id", tenantId);
     if (error) showNotice("error", `No se pudo mover la oportunidad: ${error.message}`);
-    else { setDeals(current => current.map(item => item.id === deal.id ? { ...item, stage: nextStage } : item)); setMetricsVersion(version => version + 1); showNotice("success", `Movida a ${dealStages[index + 1].label}.`); }
+    else { setDeals(current => current.map(item => item.id === deal.id ? { ...item, stage: nextStage } : item)); if (nextStage === "won") void fetch("/api/automations/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "deal_won", payload: { dealId: deal.id, contactId: deal.contactId, contactName: deal.contactName, value: deal.value } }) }); setMetricsVersion(version => version + 1); showNotice("success", `Movida a ${dealStages[index + 1].label}.`); }
   }
 
   async function deleteDeal(id: string) {
@@ -408,6 +411,7 @@ export default function Dashboard() {
     const result = await response.json();
     if (!response.ok) { showNotice("error", result.error || "No se pudo cambiar la atención."); return; }
     setThreads(current => current.map((item, index) => index === selectedThread ? { ...item, handlingMode: result.handling_mode } : item));
+    if (mode === "human") void fetch("/api/automations/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "conversation_handoff", payload: { conversationId: thread.id, contactId: thread.contactId, contactName: thread.name, assignedTo: userId } }) });
     showNotice("success", mode === "human" ? "Ahora atiende una persona." : "El asistente automático fue reactivado.");
   }
 
@@ -627,9 +631,9 @@ export default function Dashboard() {
 
       {view === "pipeline" && <section className="view active"><div className="section-heading"><div><h2>Pipeline comercial</h2><p>Oportunidades persistentes vinculadas a tus contactos.</p></div><button className="primary-button" onClick={openNewDeal}>＋ Nueva oportunidad</button></div>{showDealForm&&<form className="inline-create deal-create" onSubmit={saveDeal}><input required autoFocus value={dealTitle} onChange={e=>setDealTitle(e.target.value)} placeholder="Título de la oportunidad"/><select className="select" value={dealContactId} onChange={e=>setDealContactId(e.target.value)} aria-label="Contacto relacionado"><option value="">Sin contacto</option>{contacts.map(contact=><option value={contact.id} key={contact.id}>{contact.name}</option>)}</select><input required type="number" min="0" step="0.01" value={dealValue} onChange={e=>setDealValue(e.target.value)} placeholder="Valor en HNL"/><select className="select" value={dealStage} onChange={e=>setDealStage(e.target.value as DealStage)} aria-label="Etapa">{dealStages.map(stage=><option key={stage.id} value={stage.id}>{stage.label}</option>)}</select><input type="date" value={dealCloseDate} onChange={e=>setDealCloseDate(e.target.value)} aria-label="Fecha estimada de cierre"/><button className="primary-button">{editingDealId ? "Actualizar" : "Guardar"}</button><button type="button" className="ghost-button" onClick={closeDealForm}>Cancelar</button></form>}<div className="kanban">{dealStages.map(stage=><div className="kanban-column" key={stage.id}><div className="kanban-title">{stage.label}<span>{deals.filter(deal=>deal.stage===stage.id).length}</span></div>{deals.filter(deal=>deal.stage===stage.id).map(deal=><article className="deal-card" key={deal.id}><h4>{deal.title}</h4><p>{deal.contactName}</p>{deal.expectedCloseDate&&<small>Cierre: {new Date(`${deal.expectedCloseDate}T00:00:00`).toLocaleDateString("es-HN")}</small>}<div className="deal-footer"><strong>{new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL", maximumFractionDigits: 0 }).format(deal.value)}</strong><div className="deal-actions"><button className="ghost-button" onClick={()=>editDeal(deal)}>Editar</button>{stage.id!=="won"&&<button className="ghost-button" onClick={()=>moveDeal(deal)}>Avanzar →</button>}<button className="danger-button" onClick={()=>deleteDeal(deal.id)}>×</button></div></div></article>)}{!dataLoading&&!deals.some(deal=>deal.stage===stage.id)&&<p className="kanban-empty">Sin oportunidades</p>}</div>)}</div></section>}
 
-      {view === "automatizaciones" && <section className="view active"><div className="section-heading"><div><h2>Automatizaciones</h2><p>Respuestas y seguimientos automáticos.</p></div></div><div className="empty-feature"><div className="feature-visual">⌁</div><h3>Automatiza sin perder el toque humano</h3><p>Crea un flujo de bienvenida, calificación o seguimiento para los nuevos mensajes.</p><button className="primary-button" onClick={()=>alert("Flujo de bienvenida creado en modo demostración")}>＋ Crear flujo de bienvenida</button></div></section>}
+      {view === "automatizaciones" && <AutomationsView />}
 
-      {view === "reportes" && <section className="view active"><div className="section-heading"><div><h2>Reportes</h2><p>Rendimiento comercial y de atención.</p></div></div><div className="metrics-grid">{[["Tiempo de respuesta","4m 12s"],["Tasa de conversión","18.6%"],["Satisfacción","4.8/5"],["Ventas ganadas","28"]].map(([label,value])=><article className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small className="positive">↗ Rendimiento saludable</small></article>)}</div><article className="panel report-panel"><h3>Conversaciones atendidas</h3><div className="bars">{[45,65,56,82,74,91,80].map((height,index)=><span key={index} style={{height:`${height}%`}} />)}</div></article></section>}
+      {view === "reportes" && <ReportsView />}
 
       {view === "configuracion" && <section className="view active">
         <div className="section-heading"><div><h2>Configuración</h2><p>Administra la identidad y los servicios de esta empresa.</p></div></div>
