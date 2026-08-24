@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createCompanyReply, type AssistantRequest } from "@/lib/ai/company-assistant";
+import { runAutomations } from "@/lib/automations/engine";
 
 export const runtime = "nodejs";
 
@@ -57,6 +58,7 @@ export async function POST(request: Request) {
   if (conversationError || !conversation) return NextResponse.json({ error: conversationError?.message || "No se pudo crear la conversación" }, { status: 400, headers: cors(origin) });
   const { data: message, error } = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, metadata: { source: "web_widget", origin } }).select("id, direction, body, created_at").single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400, headers: cors(origin) });
+  await runAutomations({ tenantId: tenant.id, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: name, channel: "web", text } });
   let botMessage = null;
   if (conversation.handling_mode === "bot") {
     const [{ data: assistant }, { data: documents }, { data: history }, { data: properties }] = await Promise.all([
