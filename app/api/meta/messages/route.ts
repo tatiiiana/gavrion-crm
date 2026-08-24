@@ -1,70 +1,29 @@
-import { createHash, createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { createAdminSupabase } from "@/lib/supabase/admin";
-import { runAutomations } from "@/lib/automations/engine";
-
-export const runtime = "nodejs";
-
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const valid = url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === process.env.META_VERIFY_TOKEN;
-  return valid ? new Response(url.searchParams.get("hub.challenge") || "", { status: 200 }) : new Response("Forbidden", { status: 403 });
-}
-
-function verifySignature(raw: string, signature: string) {
-  const secret = process.env.META_APP_SECRET;
-  if (!secret || !signature.startsWith("sha256=")) return false;
-  const expected = "sha256=" + createHmac("sha256", secret).update(raw).digest("hex");
-  return signature.length === expected.length && timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-}
-
-function messageText(message: Record<string, any>) {
-  return message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || message.image?.caption || message.document?.caption || `[${message.type || "mensaje"}]`;
-}
+import { createServerSupabase } from "@/lib/supabase/server";
+import { getMetaConnectionById, graphBase } from "@/lib/meta/client";
 
 export async function POST(request: Request) {
-  const raw = await request.text();
-  if (!verifySignature(raw, request.headers.get("x-hub-signature-256") || "")) return new Response("Invalid signature", { status: 401 });
-  const payload = JSON.parse(raw);
-  const supabase = createAdminSupabase();
-  const eventId = createHash("sha256").update(raw).digest("hex");
-  const { data: existing } = await supabase.from("webhook_events").select("id").eq("provider", "meta").eq("external_id", eventId).maybeSingle();
-  if (existing) return NextResponse.json({ received: true, duplicate: true });
-  await supabase.from("webhook_events").insert({ provider: "meta", external_id: eventId, payload });
-
-  for (const entry of payload.entry || []) {
-    for (const change of entry.changes || []) {
-      const value = change.value || {};
-      const phoneNumberId = value.metadata?.phone_number_id;
-      if (!phoneNumberId) continue;
-      const { data: connection } = await supabase.from("channel_connections").select("tenant_id").eq("provider", "whatsapp").eq("external_account_id", phoneNumberId).eq("status", "active").maybeSingle();
-      if (!connection) continue;
-      const tenantId = connection.tenant_id;
-
-      for (const status of value.statuses || []) {
-        const { data: sentMessage } = await supabase.from("messages").select("id, metadata").eq("tenant_id", tenantId).eq("external_message_id", status.id).maybeSingle();
-        if (sentMessage) await supabase.from("messages").update({ metadata: { ...(sentMessage.metadata || {}), delivery_status: status.status, status_timestamp: status.timestamp } }).eq("id", sentMessage.id);
-      }
-
-      for (const incoming of value.messages || []) {
-        const { data: duplicate } = await supabase.from("messages").select("id").eq("tenant_id", tenantId).eq("external_message_id", incoming.id).maybeSingle();
-        if (duplicate) continue;
-        const phone = incoming.from;
-        const profile = (value.contacts || []).find((contact: any) => contact.wa_id === phone)?.profile?.name || phone;
-        let { data: contact } = await supabase.from("contacts").select("id").eq("tenant_id", tenantId).eq("phone", phone).maybeSingle();
-        if (!contact) {
-          const created = await supabase.from("contacts").insert({ tenant_id: tenantId, full_name: profile, phone, source: "whatsapp", status: "lead" }).select("id").single();
-          contact = created.data;
-        }
-        if (!contact) continue;
-        const { data: conversation } = await supabase.from("conversations").upsert({ tenant_id: tenantId, contact_id: contact.id, channel: "whatsapp", external_thread_id: phone, status: "open", last_message_at: new Date(Number(incoming.timestamp || 0) * 1000 || Date.now()).toISOString() }, { onConflict: "tenant_id,channel,external_thread_id" }).select("id").single();
-        if (!conversation) continue;
-        const text = messageText(incoming);
-        await supabase.from("messages").insert({ tenant_id: tenantId, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: incoming.id, metadata: { type: incoming.type, raw: incoming } });
-        await runAutomations({ tenantId, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profile, channel: "whatsapp", text } });
-      }
-    }
-  }
-  await supabase.from("webhook_events").update({ processed_at: new Date().toISOString() }).eq("provider", "meta").eq("external_id", eventId);
-  return NextResponse.json({ received: true });
+  const supabase = await createServerSupabase();
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  const { data: membership } = await supabase.from("memberships").select("role").eq("user_id", auth.user.id).limit(1).maybeSingle();
+  if (!membership || membership.role === "viewer") return NextResponse.json({ error: "Tu rol es únicamente de consulta" }, { status: 403 });
+  const { conversationId, text } = await request.json();
+  if (!conversationId || !String(text || "").trim()) return NextResponse.json({ error: "Mensaje inválido" }, { status: 400 });
+  const { data: conversation } = await supabase.from("conversations").select("id, tenant_id, channel, external_thread_id, channel_connection_id").eq("id", conversationId).single();
+  if (!conversation || !["whatsapp","facebook","instagram"].includes(conversation.channel)) return NextResponse.json({ error: "Conversación no disponible" }, { status: 404 });
+  const connection = conversation.channel_connection_id ? await getMetaConnectionById(conversation.tenant_id, conversation.channel_connection_id) : null;
+  const accountId = connection?.external_account_id || (conversation.channel === "whatsapp" ? process.env.META_PHONE_NUMBER_ID : "");
+  const accessToken = connection?.accessToken || (conversation.channel === "whatsapp" ? process.env.META_ACCESS_TOKEN : "");
+  if (!accountId || !accessToken) return NextResponse.json({ error: `Conexión de ${conversation.channel} no configurada` }, { status: 503 });
+  const payload = conversation.channel === "whatsapp"
+    ? { messaging_product: "whatsapp", recipient_type: "individual", to: conversation.external_thread_id, type: "text", text: { preview_url: false, body: String(text).trim() } }
+    : { recipient: { id: conversation.external_thread_id }, messaging_type: "RESPONSE", message: { text: String(text).trim() } };
+  const metaResponse = await fetch(`${graphBase}/${accountId}/messages`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const result = await metaResponse.json();
+  if (!metaResponse.ok) return NextResponse.json({ error: result.error?.message || "Meta rechazó el mensaje" }, { status: 502 });
+  const externalId = result.messages?.[0]?.id || result.message_id;
+  const { data: saved, error } = await supabase.from("messages").insert({ tenant_id: conversation.tenant_id, conversation_id: conversation.id, direction: "outbound", sender_type: "agent", sender_id: auth.user.id, body: String(text).trim(), external_message_id: externalId, metadata: { provider: "meta", delivery_status: "accepted" } }).select("id, body, direction, created_at").single();
+  if (!error) await supabase.from("conversations").update({ last_message_at: new Date().toISOString(), handling_mode: "human", assigned_to: auth.user.id }).eq("id", conversation.id);
+  return error ? NextResponse.json({ error: error.message }, { status: 400 }) : NextResponse.json(saved, { status: 201 });
 }
