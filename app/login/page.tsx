@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { createClientSupabase } from "@/lib/supabase/client";
 
 type FieldErrors = { email?: string; password?: string; company?: string; fullName?: string };
@@ -25,6 +25,13 @@ export default function LoginPage() {
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    const clearPassword = () => setPassword("");
+    clearPassword();
+    window.addEventListener("pageshow", clearPassword);
+    return () => window.removeEventListener("pageshow", clearPassword);
+  }, []);
+
   function validate() {
     const next: FieldErrors = {};
     if (!email.trim()) next.email = "Ingresa tu correo.";
@@ -48,12 +55,13 @@ export default function LoginPage() {
       if (mode === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
-        window.location.assign("/dashboard");
+        setPassword("");
+        window.location.replace("/dashboard");
       } else {
         const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { full_name: fullName.trim(), company_name: company.trim() } } });
         if (error) throw error;
         if (data.user?.identities?.length === 0) throw new Error("Este correo ya tiene una cuenta. Intenta iniciar sesión.");
-        if (data.session) window.location.assign("/dashboard");
+        if (data.session) { setPassword(""); window.location.replace("/dashboard"); }
         else setMessage({ type: "success", text: "Cuenta creada. Revisa tu correo y confirma el registro antes de ingresar." });
       }
     } catch (error) {
@@ -74,7 +82,7 @@ export default function LoginPage() {
         {mode === "signup" && <label>Nombre completo<input value={fullName} onChange={e=>setFullName(e.target.value)} aria-invalid={Boolean(errors.fullName)} autoComplete="name" placeholder="Ej. María Rodríguez" />{errors.fullName&&<small className="field-error">{errors.fullName}</small>}</label>}
         {mode === "signup" && <label>Empresa<input value={company} onChange={e=>setCompany(e.target.value)} aria-invalid={Boolean(errors.company)} autoComplete="organization" />{errors.company&&<small className="field-error">{errors.company}</small>}</label>}
         <label>Correo<input value={email} onChange={e=>setEmail(e.target.value)} type="email" aria-invalid={Boolean(errors.email)} autoComplete="email" placeholder="tu@empresa.com" />{errors.email&&<small className="field-error">{errors.email}</small>}</label>
-        <label>Contraseña<input value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete="off" data-lpignore="true" data-1p-ignore="true" spellCheck={false} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
+        <label>Contraseña<input name="gavrion-access-key" value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete="new-password" data-form-type="other" data-lpignore="true" data-1p-ignore="true" spellCheck={false} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
         {message&&<div className={`auth-message ${message.type}`} role="status">{message.text}</div>}
         <button disabled={loading} className="primary-button auth-submit">{loading ? "Procesando…" : mode === "login" ? "Ingresar" : "Crear cuenta"}</button>
       </form>
