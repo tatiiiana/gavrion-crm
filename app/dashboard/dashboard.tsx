@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { Contact, Deal, DealStage, Period, Task } from "@/types/crm";
 import { createClientSupabase } from "@/lib/supabase/client";
 
@@ -61,6 +61,9 @@ export default function Dashboard() {
   const [selectedThread, setSelectedThread] = useState(0);
   const [message, setMessage] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [visibleMessageCount, setVisibleMessageCount] = useState(50);
+  const messagesRef = useRef<HTMLDivElement | null>(null);
+  const previousLastMessageRef = useRef("");
   const [properties, setProperties] = useState<Property[]>([]);
   const [propertyInquiries, setPropertyInquiries] = useState<PropertyInquiry[]>([]);
   const [propertyVisits, setPropertyVisits] = useState<PropertyVisit[]>([]);
@@ -167,6 +170,57 @@ export default function Dashboard() {
     const timer = window.setInterval(updateGreeting, 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const supabase = createClientSupabase();
+    if (!supabase) return;
+    const client = supabase;
+    let active = true;
+
+    async function refreshConversations() {
+      const [contactsResult, conversationsResult, messagesResult] = await Promise.all([
+        client.from("contacts").select("id, full_name").eq("tenant_id", tenantId),
+        client.from("conversations").select("id, contact_id, channel, external_thread_id, handling_mode, last_message_at").eq("tenant_id", tenantId).order("last_message_at", { ascending: false }),
+        client.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: true })
+      ]);
+      if (!active || contactsResult.error || conversationsResult.error || messagesResult.error) return;
+
+      const names = new Map((contactsResult.data || []).map(contact => [contact.id, contact.full_name]));
+      const allMessages = messagesResult.data || [];
+      const channelLabels: Record<string, string> = { whatsapp: "WhatsApp", instagram: "Instagram", facebook: "Facebook", web: "Chat web" };
+      const nextThreads: Thread[] = (conversationsResult.data || []).map(conversation => {
+        const conversationMessages: ChatMessage[] = allMessages
+          .filter(item => item.conversation_id === conversation.id)
+          .map(item => ({ id: item.id, text: item.body || "[Mensaje multimedia]", direction: item.direction as "inbound" | "outbound", createdAt: item.created_at }));
+        return {
+          id: conversation.id,
+          name: names.get(conversation.contact_id) || conversation.external_thread_id || "Contacto",
+          channel: channelLabels[conversation.channel] || conversation.channel,
+          preview: conversationMessages.at(-1)?.text || "Sin mensajes",
+          contactId: conversation.contact_id || "",
+          externalThreadId: conversation.external_thread_id || "",
+          handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"],
+          messages: conversationMessages
+        };
+      });
+      setThreads(nextThreads);
+      setSelectedThread(current => nextThreads.length ? Math.min(current, nextThreads.length - 1) : 0);
+    }
+
+    const realtime = client
+      .channel(`crm-conversations-${tenantId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations", filter: `tenant_id=eq.${tenantId}` }, refreshConversations)
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages", filter: `tenant_id=eq.${tenantId}` }, refreshConversations)
+      .subscribe();
+    const polling = window.setInterval(refreshConversations, 8_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(polling);
+      void client.removeChannel(realtime);
+    };
+  }, [tenantId]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -384,7 +438,7 @@ export default function Dashboard() {
     try {
       await supabase?.auth.signOut({ scope: "local" });
     } finally {
-      window.location.replace("/login");
+      window.location.replace("/login?logged_out=1");
     }
   }
 
@@ -426,6 +480,37 @@ export default function Dashboard() {
   }
 
   const currentThread = threads[selectedThread] || null;
+  const visibleMessages = currentThread?.messages.slice(-visibleMessageCount) || [];
+  const hasOlderMessages = Boolean(currentThread && currentThread.messages.length > visibleMessageCount);
+
+  useEffect(() => {
+    setVisibleMessageCount(50);
+    previousLastMessageRef.current = "";
+    window.requestAnimationFrame(() => {
+      const container = messagesRef.current;
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+  }, [currentThread?.id]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    const lastMessageId = currentThread?.messages.at(-1)?.id || "";
+    if (!container || !lastMessageId || previousLastMessageRef.current === lastMessageId) return;
+    const wasNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+    const firstRender = !previousLastMessageRef.current;
+    previousLastMessageRef.current = lastMessageId;
+    if (firstRender || wasNearBottom) window.requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
+  }, [currentThread?.messages]);
+
+  function loadOlderMessages() {
+    const container = messagesRef.current;
+    const previousHeight = container?.scrollHeight || 0;
+    const previousTop = container?.scrollTop || 0;
+    setVisibleMessageCount(count => Math.min(count + 50, currentThread?.messages.length || count));
+    window.requestAnimationFrame(() => {
+      if (container) container.scrollTop = previousTop + (container.scrollHeight - previousHeight);
+    });
+  }
 
   if (!authReady) return <main className="auth-shell"><div className="auth-loading"><span className="brand-mark">G</span><strong>Abriendo Gavrion CRM…</strong></div></main>;
 
@@ -457,7 +542,7 @@ export default function Dashboard() {
         </div>
       </section>}
 
-      {view === "conversaciones" && <section className="view active"><div className="section-heading"><div><h2>Bandeja unificada</h2><p>Conversaciones atendidas por el asistente y por el equipo.</p></div></div>{currentThread ? <div className="inbox-layout"><aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span><time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time></button>)}</aside><article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel} · {currentThread.handlingMode==="waiting_agent"?"esperando agente":currentThread.handlingMode==="human"?"atención humana":"asistente activo"}</small></div></div><div className="messages">{currentThread.messages.map(item=><div key={item.id} className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></div>)}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article><aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Atención</h4><span className={`tag handling-${currentThread.handlingMode}`}>{currentThread.handlingMode==="waiting_agent"?"Requiere agente":currentThread.handlingMode==="human"?"Atención humana":"Asistente activo"}</span><div className="handoff-actions">{currentThread.handlingMode!=="human"&&<button className="primary-button" onClick={()=>setConversationMode("human")}>Tomar conversación</button>}{currentThread.handlingMode!=="bot"&&<button className="secondary-button" onClick={()=>setConversationMode("bot")}>Devolver al asistente</button>}</div></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside></div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando llegue el primer mensaje aparecerá automáticamente en esta bandeja.</p></div>}</section>}
+      {view === "conversaciones" && <section className="view active"><div className="section-heading"><div><h2>Bandeja unificada</h2><p>Conversaciones atendidas por el asistente y por el equipo.</p></div></div>{currentThread ? <div className="inbox-layout"><aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span><time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time></button>)}</aside><article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel} · {currentThread.handlingMode==="waiting_agent"?"esperando agente":currentThread.handlingMode==="human"?"atención humana":"asistente activo"}</small></div></div><div className="messages" ref={messagesRef}>{hasOlderMessages&&<button type="button" className="load-older" onClick={loadOlderMessages}>Cargar 50 mensajes anteriores</button>}{visibleMessages.map((item,index)=>{const currentDate=new Date(item.createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"});const previousDate=index?new Date(visibleMessages[index-1].createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"}):"";return <span className="message-group" key={item.id}>{currentDate!==previousDate&&<span className="message-date">{currentDate}</span>}<span className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></span></span>})}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article><aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Atención</h4><span className={`tag handling-${currentThread.handlingMode}`}>{currentThread.handlingMode==="waiting_agent"?"Requiere agente":currentThread.handlingMode==="human"?"Atención humana":"Asistente activo"}</span><div className="handoff-actions">{currentThread.handlingMode!=="human"&&<button className="primary-button" onClick={()=>setConversationMode("human")}>Tomar conversación</button>}{currentThread.handlingMode!=="bot"&&<button className="secondary-button" onClick={()=>setConversationMode("bot")}>Devolver al asistente</button>}</div></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside></div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando llegue el primer mensaje aparecerá automáticamente en esta bandeja.</p></div>}</section>}
 
       {view === "inmobiliaria" && <section className="view active"><div className="section-heading"><div><h2>Gestión inmobiliaria</h2><p>Inventario, clientes interesados y visitas registradas por el asistente.</p></div><button className="primary-button" onClick={()=>setShowPropertyForm(true)}>＋ Nuevo inmueble</button></div>{showPropertyForm&&<form className="inline-create property-create" onSubmit={saveProperty}><input required autoFocus value={propertyReference} onChange={e=>setPropertyReference(e.target.value)} placeholder="Referencia: MET-001"/><input required value={propertyTitle} onChange={e=>setPropertyTitle(e.target.value)} placeholder="Título del inmueble"/><select className="select" value={propertyType} onChange={e=>setPropertyType(e.target.value)}><option value="house">Casa</option><option value="apartment">Apartamento</option><option value="land">Terreno</option><option value="commercial">Local comercial</option><option value="office">Oficina</option><option value="other">Otro</option></select><select className="select" value={propertyOperation} onChange={e=>setPropertyOperation(e.target.value as "sale"|"rent")}><option value="sale">Venta</option><option value="rent">Alquiler</option></select><input required type="number" min="0" value={propertyPrice} onChange={e=>setPropertyPrice(e.target.value)} placeholder="Precio HNL"/><input required value={propertyCity} onChange={e=>setPropertyCity(e.target.value)} placeholder="Ciudad"/><input value={propertyZone} onChange={e=>setPropertyZone(e.target.value)} placeholder="Zona o colonia"/><input type="number" min="0" value={propertyBedrooms} onChange={e=>setPropertyBedrooms(e.target.value)} placeholder="Habitaciones"/><button className="primary-button">Guardar</button><button type="button" className="ghost-button" onClick={()=>setShowPropertyForm(false)}>Cancelar</button></form>}<div className="requests-grid"><article className="panel table-panel"><div className="panel-header"><div><h3>Propiedades</h3><p>{properties.filter(item=>item.status==="available").length} disponibles</p></div></div><div className="table-scroll"><table><thead><tr><th>Inmueble</th><th>Ubicación</th><th>Precio</th><th>Estado</th></tr></thead><tbody>{properties.length?properties.map(item=><tr key={item.id}><td><strong>{item.reference} · {item.title}</strong><small>{item.property_type} · {item.operation==="sale"?"Venta":"Alquiler"}</small></td><td>{item.city}{item.zone&&<small>{item.zone}</small>}</td><td>{new Intl.NumberFormat("es-HN",{style:"currency",currency:item.currency||"HNL",maximumFractionDigits:0}).format(item.price)}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("property",item.id,e.target.value)}><option value="available">Disponible</option><option value="reserved">Reservada</option><option value="sold">Vendida</option><option value="rented">Alquilada</option><option value="inactive">Inactiva</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay inmuebles registrados.</td></tr>}</tbody></table></div></article><article className="panel table-panel"><div className="panel-header"><div><h3>Clientes interesados</h3><p>{propertyInquiries.filter(item=>item.status==="new").length} nuevos</p></div></div><div className="table-scroll"><table><thead><tr><th>Cliente</th><th>Búsqueda</th><th>Presupuesto</th><th>Estado</th></tr></thead><tbody>{propertyInquiries.length?propertyInquiries.map(item=><tr key={item.id}><td><strong>{item.customer_name}</strong><small>{item.phone}</small></td><td>{item.intent==="buy"?"Compra":item.intent==="rent"?"Alquiler":"Venta"} · {item.property_type||"Inmueble"}<small>{[item.city,item.zone].filter(Boolean).join(" · ")||"Sin ubicación"}{item.bedrooms?` · ${item.bedrooms} hab.`:""}</small></td><td>{item.budget_max?new Intl.NumberFormat("es-HN",{style:"currency",currency:"HNL",maximumFractionDigits:0}).format(item.budget_max):"Por definir"}{item.notes&&<small>{item.notes}</small>}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("inquiry",item.id,e.target.value)}><option value="new">Nuevo</option><option value="contacted">Contactado</option><option value="qualified">Calificado</option><option value="closed">Cerrado</option><option value="discarded">Descartado</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay interesados.</td></tr>}</tbody></table></div></article><article className="panel table-panel"><div className="panel-header"><div><h3>Solicitudes de visita</h3><p>{propertyVisits.filter(item=>item.status==="pending").length} pendientes</p></div></div><div className="table-scroll"><table><thead><tr><th>Cliente</th><th>Propiedad</th><th>Fecha</th><th>Estado</th></tr></thead><tbody>{propertyVisits.length?propertyVisits.map(item=><tr key={item.id}><td><strong>{item.customer_name}</strong><small>{item.phone}</small></td><td>{item.property_reference}<small>{item.party_size} visitante{item.party_size===1?"":"s"}</small></td><td>{new Date(`${item.requested_date}T00:00:00`).toLocaleDateString("es-HN")} · {item.requested_time.slice(0,5)}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("visit",item.id,e.target.value)}><option value="pending">Pendiente</option><option value="confirmed">Confirmada</option><option value="completed">Completada</option><option value="cancelled">Cancelada</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay visitas solicitadas.</td></tr>}</tbody></table></div></article></div></section>}
 
