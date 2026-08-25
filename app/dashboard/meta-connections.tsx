@@ -66,7 +66,7 @@ export function MetaConnections(){
     <div className="meta-connections-head">
       <div className="meta-heading"><span className="meta-symbol">M</span><div><p className="eyebrow">META EN PRODUCCIÓN</p><h3>Canales de mensajería</h3><p>Conecta las cuentas propias de esta empresa. Las credenciales permanecen protegidas en el servidor.</p></div></div>
       <div className="meta-connect-actions">
-        <button type="button" className="primary-button" onClick={connectMeta} disabled={connectingMeta}>{connectingMeta?"Abriendo Meta…":"Conectar Facebook e Instagram"}</button>
+        <button type="button" className="primary-button" onClick={connectMeta} disabled={connectingMeta}>{connectingMeta?"Abriendo Meta…":"Conectar Facebook Messenger"}</button>
         <button type="button" className="secondary-button" onClick={()=>setShowWhatsapp(value=>!value)}>{showWhatsapp?"Cerrar WhatsApp":"Conectar WhatsApp"}</button>
       </div>
     </div>
