@@ -16,7 +16,10 @@ export async function GET(request: Request) {
   const admin = createAdminSupabase();
   await admin.from("meta_oauth_states").insert({ state, tenant_id: membership.tenant_id, user_id: auth.user.id, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() });
   const redirectUri = process.env.META_REDIRECT_URI || `${new URL(request.url).origin}/api/meta/callback`;
-  const scopes = ["pages_show_list","pages_messaging","pages_manage_metadata","instagram_basic","instagram_manage_messages","business_management"].join(",");
+  // Instagram Login usa un flujo y permisos distintos. Este OAuth es solo
+  // para Facebook Pages/Messenger; incluir permisos de Instagram aquí hace
+  // que Meta rechace toda la autorización como "Invalid Scopes".
+  const scopes = ["pages_show_list","pages_messaging","pages_manage_metadata","business_management"].join(",");
   const dialog = new URL(`https://www.facebook.com/${graphVersion}/dialog/oauth`);
   dialog.searchParams.set("client_id", appId); dialog.searchParams.set("redirect_uri", redirectUri); dialog.searchParams.set("state", state); dialog.searchParams.set("scope", scopes); dialog.searchParams.set("response_type", "code");
   if (new URL(request.url).searchParams.get("mode") === "json") return NextResponse.json({ url: dialog.toString() });
