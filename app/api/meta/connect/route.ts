@@ -22,6 +22,8 @@ export async function GET(request: Request) {
   const scopes = ["pages_show_list","pages_messaging","pages_manage_metadata","business_management"].join(",");
   const dialog = new URL(`https://www.facebook.com/${graphVersion}/dialog/oauth`);
   dialog.searchParams.set("client_id", appId); dialog.searchParams.set("redirect_uri", redirectUri); dialog.searchParams.set("state", state); dialog.searchParams.set("scope", scopes); dialog.searchParams.set("response_type", "code");
+  dialog.searchParams.set("auth_type", "rerequest");
+  dialog.searchParams.set("return_scopes", "true");
   if (new URL(request.url).searchParams.get("mode") === "json") return NextResponse.json({ url: dialog.toString() });
   return NextResponse.redirect(dialog);
 }
