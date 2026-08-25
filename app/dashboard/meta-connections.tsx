@@ -31,6 +31,14 @@ export function MetaConnections(){
     }catch(error){setMessageType("error");setMessage(error instanceof Error?error.message:"No fue posible cargar las conexiones.");}
   }
   useEffect(()=>{load();},[]);
+  useEffect(()=>{
+    const params=new URLSearchParams(window.location.search);const status=params.get("meta");
+    if(!status)return;
+    if(status==="connected"){setMessageType("success");setMessage("Facebook Messenger quedó conectado y suscrito correctamente.");load();}
+    else{setMessageType("error");setMessage(`Meta no pudo completar la conexión: ${status}`);}
+    params.delete("meta");params.delete("view");
+    window.history.replaceState({},"",`${window.location.pathname}${params.size?`?${params.toString()}`:""}`);
+  },[]);
 
   async function connectMeta(){
     setConnectingMeta(true);setMessage("");
