@@ -46,7 +46,7 @@ export default function Dashboard() {
   const [userId, setUserId] = useState("");
   const [dataLoading, setDataLoading] = useState(true);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [view, setView] = useState("inicio");
+  const [view, setView] = useState(() => typeof window === "undefined" ? "inicio" : new URLSearchParams(window.location.search).get("view") || "inicio");
   const [period, setPeriod] = useState<Period>("30d");
   const [dashboardMetrics, setDashboardMetrics] = useState({ contacts: 0, conversations: 0, deals: 0, won: 0, pipeline: 0 });
   const [activity, setActivity] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
