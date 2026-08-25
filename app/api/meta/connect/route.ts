@@ -2,16 +2,28 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { graphVersion } from "@/lib/meta/client";
+import { graphBase, graphVersion } from "@/lib/meta/client";
 
 export async function GET(request: Request) {
-  const appId = process.env.META_APP_ID;
+  const cleanEnv = (value?: string) => value?.trim().replace(/^['"]|['"]$/g, "") || "";
+  const appId = cleanEnv(process.env.META_APP_ID);
+  const appSecret = cleanEnv(process.env.META_APP_SECRET);
   if (!appId) return NextResponse.json({ error: "Falta META_APP_ID" }, { status: 503 });
+  if (!appSecret) return NextResponse.json({ error: "Falta META_APP_SECRET" }, { status: 503 });
   const supabase = await createServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return NextResponse.redirect(new URL("/login", request.url));
   const { data: membership } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", auth.user.id).limit(1).maybeSingle();
   if (!membership || !["owner","admin"].includes(membership.role)) return NextResponse.json({ error: "Solo administradores" }, { status: 403 });
+  const validationUrl = new URL(`${graphBase}/oauth/access_token`);
+  validationUrl.searchParams.set("client_id", appId);
+  validationUrl.searchParams.set("client_secret", appSecret);
+  validationUrl.searchParams.set("grant_type", "client_credentials");
+  const validationResponse = await fetch(validationUrl, { cache: "no-store" });
+  if (!validationResponse.ok) {
+    const validation = await validationResponse.json().catch(() => ({}));
+    return NextResponse.json({ error: `Meta rechazó META_APP_ID/META_APP_SECRET: ${validation.error?.message || "credenciales inválidas"}. Revisa el entorno del último despliegue en Vercel.` }, { status: 503 });
+  }
   const state = randomUUID();
   const admin = createAdminSupabase();
   await admin.from("meta_oauth_states").insert({ state, tenant_id: membership.tenant_id, user_id: auth.user.id, expires_at: new Date(Date.now() + 10 * 60_000).toISOString() });

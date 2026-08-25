@@ -11,7 +11,8 @@ export async function GET(request: Request) {
   if (!oauth || oauth.used_at || new Date(oauth.expires_at) < new Date()) return finish("estado-invalido");
   await admin.from("meta_oauth_states").update({ used_at: new Date().toISOString() }).eq("state", state);
   try {
-    const appId = process.env.META_APP_ID!; const secret = process.env.META_APP_SECRET!; const redirectUri = process.env.META_REDIRECT_URI || `${url.origin}/api/meta/callback`;
+    const cleanEnv = (value?: string) => value?.trim().replace(/^['"]|['"]$/g, "") || "";
+    const appId = cleanEnv(process.env.META_APP_ID); const secret = cleanEnv(process.env.META_APP_SECRET); const redirectUri = cleanEnv(process.env.META_REDIRECT_URI) || `${url.origin}/api/meta/callback`;
     const tokenResponse = await fetch(`${graphBase}/oauth/access_token?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(secret)}&redirect_uri=${encodeURIComponent(redirectUri)}&code=${encodeURIComponent(code)}`);
     const token = await tokenResponse.json(); if (!tokenResponse.ok) throw new Error(token.error?.message || "No se obtuvo el token");
     let userToken = token.access_token as string; let expiresIn = Number(token.expires_in || 3600);
