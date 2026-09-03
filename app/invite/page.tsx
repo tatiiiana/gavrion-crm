@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { createClientSupabase } from "@/lib/supabase/client";
+import { createClientSupabase, createInviteSupabase } from "@/lib/supabase/client";
 
 export default function AcceptInvitationPage() {
   const [ready, setReady] = useState(false);
@@ -12,7 +12,7 @@ export default function AcceptInvitationPage() {
   const [accountEmail, setAccountEmail] = useState("");
 
   useEffect(() => {
-    const supabase = createClientSupabase();
+    const supabase = createInviteSupabase();
     if (!supabase) { setMessage("Supabase no está configurado."); return; }
     const client = supabase;
     let active = true;
@@ -28,9 +28,8 @@ export default function AcceptInvitationPage() {
         return;
       }
 
-      // Nunca permite que una sesión anterior (por ejemplo, la del Superadministrador)
-      // sea la cuenta cuya contraseña se modifica.
-      await client.auth.signOut({ scope:"local" });
+      // exchangeCodeForSession/setSession reemplaza la sesión anterior con la
+      // identidad incluida en el enlace, sin consumir o revocar antes el token.
       const result = code
         ? await client.auth.exchangeCodeForSession(code)
         : await client.auth.setSession({ access_token:accessToken!, refresh_token:refreshToken! });
