@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./skydash-theme.css";
+import SessionGuard from "./session-guard";
 
 export const metadata: Metadata = {
   title: "Gavrion CRM",
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="es"><body>{children}</body></html>;
+  return <html lang="es"><body>{children}<SessionGuard /></body></html>;
 }
