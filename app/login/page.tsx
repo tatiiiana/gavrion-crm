@@ -56,7 +56,9 @@ export default function LoginPage() {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
         setPassword("");
-        window.location.replace("/dashboard");
+        const accessResponse = await fetch("/api/admin/access", { cache: "no-store" });
+        const access = accessResponse.ok ? await accessResponse.json() : { isPlatformAdmin: false };
+        window.location.replace(access.isPlatformAdmin ? "/admin" : "/dashboard");
       } else {
         const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { full_name: fullName.trim(), company_name: company.trim() } } });
         if (error) throw error;
