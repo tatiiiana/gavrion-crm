@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { createClientSupabase } from "@/lib/supabase/client";
 
 type FieldErrors = { email?: string; password?: string; company?: string; fullName?: string };
@@ -10,7 +10,7 @@ function friendlyError(message: string) {
   if (normalized.includes("invalid login credentials")) return "El correo o la contraseña son incorrectos.";
   if (normalized.includes("email not confirmed")) return "Debes confirmar tu correo antes de ingresar.";
   if (normalized.includes("already registered") || normalized.includes("already been registered")) return "Este correo ya tiene una cuenta. Intenta iniciar sesión.";
-  if (normalized.includes("rate limit")) return "Demasiados intentos. Espera unos minutos y vuelve a intentarlo.";
+  if (normalized.includes("rate limit") || normalized.includes("too many requests")) return "Supabase bloqueó temporalmente nuevos intentos. No vuelvas a intentarlo durante al menos 30 minutos.";
   if (normalized.includes("fetch failed") || normalized.includes("failed to fetch")) return "No fue posible conectar con Supabase. Verifica tu conexión e inténtalo nuevamente.";
   return message || "Ocurrió un error inesperado. Inténtalo nuevamente.";
 }
@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const requestInProgress = useRef(false);
 
   useEffect(() => {
     const clearPassword = () => setPassword("");
@@ -52,10 +53,11 @@ export default function LoginPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setMessage(null);
+    if(requestInProgress.current||loading)return;
     if (!validate()) return;
     const supabase = createClientSupabase();
     if (!supabase) { setMessage({ type: "error", text: "Supabase todavía no está configurado." }); return; }
-    setLoading(true);
+    requestInProgress.current=true; setLoading(true);
     try {
       if (mode === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
@@ -73,16 +75,19 @@ export default function LoginPage() {
       }
     } catch (error) {
       setMessage({ type: "error", text: friendlyError(error instanceof Error ? error.message : "") });
-    } finally { setPassword(""); setLoading(false); }
+    } finally { setPassword(""); setLoading(false); requestInProgress.current=false; }
   }
 
   async function requestRecovery() {
+    if(requestInProgress.current||recovering)return;
     setErrors({}); setMessage(null);
-    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setErrors({ email:"Escribe primero el correo de la cuenta." }); return; }
+    const recoveryEmail=email.trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(recoveryEmail)) { setErrors({ email:"Escribe primero el correo real de la cuenta." }); return; }
+    if(/@(example|ejemplo)\.com$/i.test(recoveryEmail)){setErrors({email:"Ese es un correo de ejemplo. Escribe el correo real registrado en Supabase."});return;}
     const supabase=createClientSupabase(); if(!supabase)return;
-    setRecovering(true);
-    const { error }=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:`${window.location.origin}/invite?recovery=1`});
-    setRecovering(false);
+    requestInProgress.current=true; setRecovering(true);
+    const { error }=await supabase.auth.resetPasswordForEmail(recoveryEmail,{redirectTo:`${window.location.origin}/invite?recovery=1`});
+    setRecovering(false); requestInProgress.current=false;
     setMessage(error?{type:"error",text:friendlyError(error.message)}:{type:"success",text:"Te enviamos un enlace para establecer una nueva contraseña."});
   }
 
@@ -99,7 +104,7 @@ export default function LoginPage() {
         {mode === "signup" && <label>Nombre completo<input value={fullName} onChange={e=>setFullName(e.target.value)} aria-invalid={Boolean(errors.fullName)} autoComplete="name" placeholder="Ej. María Rodríguez" />{errors.fullName&&<small className="field-error">{errors.fullName}</small>}</label>}
         {mode === "signup" && <label>Empresa<input value={company} onChange={e=>setCompany(e.target.value)} aria-invalid={Boolean(errors.company)} autoComplete="organization" />{errors.company&&<small className="field-error">{errors.company}</small>}</label>}
         <label>Correo<input value={email} onChange={e=>setEmail(e.target.value)} type="email" aria-invalid={Boolean(errors.email)} autoComplete="email" placeholder="tu@empresa.com" />{errors.email&&<small className="field-error">{errors.email}</small>}</label>
-        <label>Contraseña<input name="gavrion-access-key" value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete="new-password" data-form-type="other" data-lpignore="true" data-1p-ignore="true" spellCheck={false} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
+        <label>Contraseña<input name="password" value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete="current-password" spellCheck={false} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
         {message&&<div className={`auth-message ${message.type}`} role="status">{message.text}</div>}
         <button disabled={loading} className="primary-button auth-submit">{loading ? "Procesando…" : mode === "login" ? "Ingresar" : "Crear cuenta"}</button>
         {mode==="login"&&<button type="button" className="auth-recovery" disabled={recovering} onClick={requestRecovery}>{recovering?"Enviando enlace…":"Olvidé mi contraseña"}</button>}
