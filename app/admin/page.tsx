@@ -29,6 +29,8 @@ export default function SuperadminPage() {
   const [showCloneForm, setShowCloneForm] = useState(false);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<{ kind:"success"|"error"; text:string } | null>(null);
+  const [formError, setFormError] = useState("");
+  const [statusSaving, setStatusSaving] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
@@ -56,25 +58,37 @@ export default function SuperadminPage() {
 
   function selectTemplate(id: string) { const selected=templates.find(item=>item.id===id); setTemplateId(id); setModules(selected?.configuration?.modules || []); }
   function toggleModule(key: string) { setModules(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key]); }
-  function closeForm() { setShowForm(false); setName(""); setOwnerName(""); setOwnerEmail(""); if(templates[0])selectTemplate(templates[0].id); }
+  function closeForm() { setShowForm(false); setFormError(""); setName(""); setOwnerName(""); setOwnerEmail(""); if(templates[0])selectTemplate(templates[0].id); }
 
   async function createImplementation(event: FormEvent) {
-    event.preventDefault(); setSaving(true); setNotice(null);
+    event.preventDefault();
+    if(saving)return;
+    setFormError(""); setNotice(null);
+    if(name.trim().length<2){setFormError("Escribe el nombre de la empresa.");return}
+    if(ownerName.trim().length<3){setFormError("Escribe el nombre completo del propietario.");return}
+    if(!/^\S+@\S+\.\S+$/.test(ownerEmail.trim())){setFormError("Escribe un correo válido para el propietario.");return}
+    if(!templateId){setFormError("Selecciona una plantilla.");return}
+    if(!modules.length){setFormError("Activa al menos un módulo.");return}
+    setSaving(true);
     try {
       const response = await fetch("/api/admin/implementations", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ name, ownerName, ownerEmail, templateId, modules }) });
-      const data = await response.json();
+      const raw=await response.text();
+      const data=raw?JSON.parse(raw):{};
       if (!response.ok) throw new Error(data.error || "No se pudo crear la implementación.");
       setItems(current => [data, ...current]); closeForm();
       setNotice({ kind:"success", text:`${data.name} fue creada y se envió la invitación a ${ownerEmail}.` });
-    } catch (error) { setNotice({ kind:"error", text:error instanceof Error ? error.message : "No se pudo crear." }); }
+    } catch (error) { setFormError(error instanceof Error ? error.message : "No se pudo crear la empresa ni enviar la invitación."); }
     finally { setSaving(false); }
   }
 
   async function changeStatus(tenantId: string, status: string) {
-    const response = await fetch("/api/admin/implementations", { method:"PATCH", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ tenantId, status }) });
-    const data = await response.json();
-    if (!response.ok) { setNotice({ kind:"error", text:data.error || "No se pudo actualizar el estado." }); return; }
-    setItems(current => current.map(item => item.id === tenantId ? { ...item, implementation_status:status } : item));
+    if(statusSaving)return;
+    const previous=items.find(item=>item.id===tenantId)?.implementation_status||"draft";
+    setStatusSaving(tenantId); setNotice(null);
+    setItems(current=>current.map(item=>item.id===tenantId?{...item,implementation_status:status}:item));
+    try{const response = await fetch("/api/admin/implementations", { method:"PATCH", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ tenantId, status }) });const raw=await response.text();const data=raw?JSON.parse(raw):{};if (!response.ok) throw new Error(data.error||"No se pudo actualizar el estado.");setNotice({kind:"success",text:`Estado actualizado a ${statusLabels[status]}.`});}
+    catch(error){setItems(current=>current.map(item=>item.id===tenantId?{...item,implementation_status:previous}:item));setNotice({kind:"error",text:error instanceof Error?error.message:"No se pudo actualizar el estado."})}
+    finally{setStatusSaving(null)}
   }
 
   async function cloneTemplate(event:FormEvent){event.preventDefault();setSaving(true);setNotice(null);try{const response=await fetch("/api/admin/templates",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceTenantId:cloneSourceId,name:cloneName,description:cloneDescription})});const data=await response.json();if(!response.ok)throw new Error(data.error||"No se pudo crear la plantilla.");setTemplates(current=>[data,...current]);setShowCloneForm(false);setCloneSourceId("");setCloneName("");setCloneDescription("");setNotice({kind:"success",text:`La plantilla ${data.name} quedó lista para reutilizar.`});}catch(error){setNotice({kind:"error",text:error instanceof Error?error.message:"No se pudo clonar."});}finally{setSaving(false)}}
@@ -104,19 +118,20 @@ export default function SuperadminPage() {
               <td>{templates.find(option=>option.id===item.implementation_template_id)?.name || item.template_key}</td>
               <td><strong>{item.owner?.name || "Sin propietario"}</strong><small>{item.owner?.email || "—"}</small></td>
               <td><span className="module-count">{item.settings?.modules?.length || 0} activos</span></td>
-              <td><select value={item.implementation_status} onChange={event=>void changeStatus(item.id,event.target.value)}><option value="draft">Borrador</option><option value="configuring">Configuración</option><option value="testing">Pruebas</option><option value="ready">Lista para entregar</option><option value="production">Producción</option><option value="suspended">Suspendida</option><option value="archived">Archivada</option></select><small className={`implementation-status status-${item.implementation_status}`}>{statusLabels[item.implementation_status]}</small></td>
-              <td><a className="support-button" href={`/dashboard?supportTenant=${item.id}`} target="_blank" rel="noreferrer">Abrir en soporte ↗</a></td>
+              <td><select disabled={statusSaving===item.id} value={item.implementation_status} onChange={event=>void changeStatus(item.id,event.target.value)}><option value="draft">Borrador</option><option value="configuring">Configuración</option><option value="testing">Pruebas</option><option value="ready">Lista para entregar</option><option value="production">Producción</option><option value="suspended">Suspendida</option><option value="archived">Archivada</option></select>{statusSaving===item.id&&<small className="status-progress">Guardando…</small>}<small className={`implementation-status status-${item.implementation_status}`}>{statusLabels[item.implementation_status]}</small></td>
+              <td><a className="support-button" title="Abrir el CRM de esta empresa como Superadministrador, sin usar la contraseña del propietario" href={`/dashboard?supportTenant=${item.id}`} target="_blank" rel="noreferrer">Abrir en soporte ↗</a></td>
             </tr>):<tr><td colSpan={6} className="admin-empty">No hay empresas que coincidan.</td></tr>}
           </tbody></table></div>
         </section></>}
         {section==="templates"&&<section className="templates-library"><div className="templates-intro"><div><h2>Biblioteca de plantillas</h2><p>Cada plantilla conserva módulos, configuración del asistente, conocimiento, automatizaciones, horario y ajustes reutilizables.</p></div><span>{templates.length} disponibles</span></div><div className="template-library-grid">{templates.map(template=><article key={template.id}><div className="template-card-top"><span>{template.business_type.slice(0,2).toUpperCase()}</span>{template.is_system&&<i>Base Gavrion</i>}</div><h3>{template.name}</h3><p>{template.description||"Plantilla personalizada creada desde una implementación."}</p><div className="template-summary"><span>{template.configuration.modules?.length||0} módulos</span><span>{template.configuration.knowledge?.length||0} documentos</span><span>{template.configuration.automations?.length||0} flujos</span></div><div className="template-card-actions"><button onClick={()=>{selectTemplate(template.id);setSection("companies");setShowForm(true)}}>Usar plantilla</button>{!template.is_system&&<button className="archive-template" onClick={()=>void archiveTemplate(template.id)}>Archivar</button>}</div></article>)}</div></section>}
       </div>
     </section>
-    {showForm&&<div className="implementation-modal" role="dialog" aria-modal="true"><form onSubmit={createImplementation}>
+    {showForm&&<div className="implementation-modal" role="dialog" aria-modal="true"><form onSubmit={createImplementation} noValidate>
       <div className="modal-title"><div><p>NUEVO CLIENTE</p><h2>Nueva implementación</h2></div><button type="button" onClick={closeForm}>×</button></div>
       <div className="admin-form-grid"><label>Nombre de la empresa<input required minLength={2} value={name} onChange={event=>setName(event.target.value)} placeholder="Ej. Metro Inmobiliaria" /></label><label>Nombre del propietario<input required minLength={3} value={ownerName} onChange={event=>setOwnerName(event.target.value)} placeholder="Nombre completo" /></label><label className="wide">Correo del propietario<input required type="email" value={ownerEmail} onChange={event=>setOwnerEmail(event.target.value)} placeholder="propietario@empresa.com" /><small>Recibirá una invitación para establecer su acceso.</small></label></div>
       <fieldset><legend>Selecciona una plantilla</legend><div className="template-grid">{templates.map(option=><button type="button" key={option.id} className={templateId===option.id?"selected":""} onClick={()=>selectTemplate(option.id)}><strong>{option.name}</strong><small>{option.description}</small></button>)}</div></fieldset>
       <fieldset><legend>Activa los módulos</legend><div className="module-grid">{moduleOptions.map(([key,label])=><label key={key}><input type="checkbox" checked={modules.includes(key)} onChange={()=>toggleModule(key)} /><span>{label}</span></label>)}</div></fieldset>
+      {formError&&<div className="implementation-form-error" role="alert"><strong>No se pudo completar la implementación</strong><span>{formError}</span>{/rate|limit|email|correo|mail/i.test(formError)&&<small>Si Supabase limitó los correos, espera antes de volver a intentarlo o configura un servidor SMTP propio.</small>}</div>}
       <div className="admin-modal-actions"><button type="button" className="admin-secondary" onClick={closeForm}>Cancelar</button><button disabled={saving} className="admin-primary">{saving?"Creando…":"Crear e invitar propietario"}</button></div>
     </form></div>}
     {showCloneForm&&<div className="implementation-modal" role="dialog" aria-modal="true"><form onSubmit={cloneTemplate} className="clone-template-form"><div className="modal-title"><div><p>CLONADOR</p><h2>Crear plantilla desde una empresa</h2></div><button type="button" onClick={()=>setShowCloneForm(false)}>×</button></div><p className="clone-help">Se copiarán únicamente configuraciones reutilizables. No se copiarán contactos, conversaciones, credenciales, usuarios, propiedades, pedidos ni datos legales.</p><div className="admin-form-grid"><label className="wide">Empresa de origen<select required value={cloneSourceId} onChange={event=>setCloneSourceId(event.target.value)}><option value="">Selecciona una empresa configurada</option>{items.map(item=><option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>Nombre de la plantilla<input required minLength={3} value={cloneName} onChange={event=>setCloneName(event.target.value)} placeholder="Ej. Inmobiliaria premium" /></label><label>Descripción<input value={cloneDescription} onChange={event=>setCloneDescription(event.target.value)} placeholder="Qué incluye y cuándo utilizarla" /></label></div><div className="clone-includes"><strong>Se incluye</strong><span>✓ Módulos activados</span><span>✓ Instrucciones de IA</span><span>✓ Base de conocimiento</span><span>✓ Automatizaciones</span><span>✓ Widget y horarios</span></div><div className="admin-modal-actions"><button type="button" className="admin-secondary" onClick={()=>setShowCloneForm(false)}>Cancelar</button><button disabled={saving} className="admin-primary">{saving?"Clonando…":"Guardar como plantilla"}</button></div></form></div>}
