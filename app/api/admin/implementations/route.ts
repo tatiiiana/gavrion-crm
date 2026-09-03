@@ -79,7 +79,9 @@ export async function POST(request: Request) {
     const invited = await admin.auth.admin.inviteUserByEmail(ownerEmail, { redirectTo: `${origin}/invite`, data: { full_name: ownerName, company_name: name, provisioned_by_gavrion: true } });
     if (invited.error || !invited.data.user) {
       await admin.from("tenants").delete().eq("id", tenant.id);
-      return NextResponse.json({ error: invited.error?.message || "No se pudo invitar al propietario." }, { status: 400 });
+      const detail=invited.error?.message || "No se pudo invitar al propietario.";
+      const limited=/rate|limit|too many|email rate/i.test(detail);
+      return NextResponse.json({ error:limited?"Supabase alcanzó el límite temporal de correos de invitación. Espera antes de intentar nuevamente o configura SMTP propio.":`No se pudo enviar la invitación: ${detail}` }, { status: limited?429:400 });
     }
     owner = invited.data.user;
     // El trigger de registro crea un tenant temporal; se elimina al reasignar al usuario.
