@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import "./superadmin.css";
+import { createClientSupabase } from "@/lib/supabase/client";
 
 type Owner = { id: string; name: string; email: string } | null;
 type Implementation = { id: string; name: string; slug: string; plan: string; template_key: string; implementation_template_id:string|null; implementation_status: string; settings: { modules?: string[] }; created_at: string; owner: Owner };
@@ -23,6 +24,7 @@ export default function SuperadminPage() {
   const [section, setSection] = useState<"companies"|"templates">("companies");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showCloneForm, setShowCloneForm] = useState(false);
   const [query, setQuery] = useState("");
@@ -77,12 +79,13 @@ export default function SuperadminPage() {
 
   async function cloneTemplate(event:FormEvent){event.preventDefault();setSaving(true);setNotice(null);try{const response=await fetch("/api/admin/templates",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceTenantId:cloneSourceId,name:cloneName,description:cloneDescription})});const data=await response.json();if(!response.ok)throw new Error(data.error||"No se pudo crear la plantilla.");setTemplates(current=>[data,...current]);setShowCloneForm(false);setCloneSourceId("");setCloneName("");setCloneDescription("");setNotice({kind:"success",text:`La plantilla ${data.name} quedó lista para reutilizar.`});}catch(error){setNotice({kind:"error",text:error instanceof Error?error.message:"No se pudo clonar."});}finally{setSaving(false)}}
   async function archiveTemplate(id:string){if(!window.confirm("¿Archivar esta plantilla personalizada?"))return;const response=await fetch("/api/admin/templates",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,action:"archive"})});const data=await response.json();if(!response.ok){setNotice({kind:"error",text:data.error||"No se pudo archivar."});return}setTemplates(current=>current.filter(item=>item.id!==id));setNotice({kind:"success",text:"Plantilla archivada."})}
+  async function logout(){if(loggingOut)return;setLoggingOut(true);const supabase=createClientSupabase();if(supabase)await supabase.auth.signOut({scope:"local"});window.location.replace("/login")}
 
   return <main className="superadmin-shell">
     <aside className="superadmin-sidebar">
       <div className="superadmin-brand"><span>G</span><div><strong>Gavrion</strong><small>Control de implementaciones</small></div></div>
       <nav><button className={section==="companies"?"active":""} onClick={()=>setSection("companies")}>▦ Empresas</button><button className={section==="templates"?"active":""} onClick={()=>setSection("templates")}>◇ Plantillas</button><a href="/dashboard">⌂ Mi CRM</a></nav>
-      <div className="superadmin-identity"><span>SA</span><div><strong>Superadministrador</strong><small>Acceso interno Gavrion</small></div></div>
+      <div className="superadmin-session"><div className="superadmin-identity"><span>SA</span><div><strong>Superadministrador</strong><small>Acceso interno Gavrion</small></div></div><button className="superadmin-logout" disabled={loggingOut} onClick={()=>void logout()}><span>↪</span>{loggingOut?"Cerrando sesión…":"Cerrar sesión"}</button></div>
     </aside>
     <section className="superadmin-main">
       <header><div><p>PLATAFORMA GAVRION</p><h1>{section==="companies"?"Implementaciones":"Plantillas de CRM"}</h1></div><button className="admin-primary" onClick={()=>section==="companies"?setShowForm(true):setShowCloneForm(true)}>＋ {section==="companies"?"Nueva implementación":"Crear desde una empresa"}</button></header>
