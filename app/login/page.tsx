@@ -77,7 +77,7 @@ export default function LoginPage() {
       <p className="eyebrow">GAVRION CRM</p>
       <h1>{mode === "login" ? "Bienvenido de nuevo" : "Crea tu cuenta"}</h1>
       <p>{mode === "login" ? "Administra conversaciones, clientes y oportunidades desde un solo lugar." : "Configura el espacio de trabajo de tu empresa."}</p>
-      <div className="auth-tabs" role="tablist"><button type="button" className={mode === "login" ? "active" : ""} onClick={()=>changeMode("login")}>Ingresar</button><button type="button" className={mode === "signup" ? "active" : ""} onClick={()=>changeMode("signup")}>Crear cuenta</button></div>
+      <div className="auth-tabs" role="tablist"><button type="button" className="active" onClick={()=>changeMode("login")}>Ingresar</button></div>
       <form className="auth-form" onSubmit={submit} noValidate autoComplete="off">
         {mode === "signup" && <label>Nombre completo<input value={fullName} onChange={e=>setFullName(e.target.value)} aria-invalid={Boolean(errors.fullName)} autoComplete="name" placeholder="Ej. María Rodríguez" />{errors.fullName&&<small className="field-error">{errors.fullName}</small>}</label>}
         {mode === "signup" && <label>Empresa<input value={company} onChange={e=>setCompany(e.target.value)} aria-invalid={Boolean(errors.company)} autoComplete="organization" />{errors.company&&<small className="field-error">{errors.company}</small>}</label>}

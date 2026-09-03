@@ -37,6 +37,7 @@ h1,h2,h3,h4,h5,h6,.brand,.topbar h1,.hero-row h2,.section-heading h2,.panel-head
 .logout-button:hover{border-color:#f0d3d8;background:#fff1f3;color:#b84d5c}
 
 .topbar{height:78px;padding:0 30px;background:rgba(255,255,255,.96);border-bottom:1px solid var(--sky-line);box-shadow:0 3px 14px rgba(38,45,78,.025);backdrop-filter:blur(12px)}
+.support-mode-banner{min-height:38px;padding:9px 30px;background:#fff4dc;border-bottom:1px solid #efdba9;color:#7c5b1c;font-size:10px;display:flex;align-items:center;gap:5px}.support-mode-banner a{margin-left:auto;color:#4b49ac;font-weight:700;text-decoration:none}
 .topbar h1{margin:3px 0 0;color:#292c43;font-size:19px;letter-spacing:-.02em}
 .eyebrow{color:#9a9fb0;font-size:9px;letter-spacing:.14em}
 .search{border-color:var(--sky-line);background:#f8f9fc;color:#9a9fb0}

@@ -38,7 +38,7 @@ export async function POST(request: Request) {
   let invited = listed.users.find(user => user.email?.toLowerCase() === cleanEmail);
   if (!invited) {
     const origin = new URL(request.url).origin;
-    const result = await admin.auth.admin.inviteUserByEmail(cleanEmail, { redirectTo: `${origin}/login` });
+    const result = await admin.auth.admin.inviteUserByEmail(cleanEmail, { redirectTo: `${origin}/invite` });
     if (result.error || !result.data.user) return NextResponse.json({ error: result.error?.message || "No se pudo invitar" }, { status: 400 });
     invited = result.data.user;
     const { data: generated } = await admin.from("memberships").select("tenant_id").eq("user_id", invited.id);

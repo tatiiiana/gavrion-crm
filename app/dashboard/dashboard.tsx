@@ -24,6 +24,8 @@ export default function Dashboard() {
   const [greeting, setGreeting] = useState("Hola");
   const [account, setAccount] = useState({ name: "Usuario", email: "", initials: "U", role: "Miembro", company: "" });
   const [currentRole, setCurrentRole] = useState("");
+  const [supportMode, setSupportMode] = useState(false);
+  const [enabledModules, setEnabledModules] = useState<string[] | null>(null);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<TeamMember["role"]>("agent");
@@ -107,18 +109,30 @@ export default function Dashboard() {
         setUserId(user.id);
         const email = user.email || "";
         const name = String(user.user_metadata?.full_name || email.split("@")[0] || "Usuario");
-        const { data: membership } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id).limit(1).maybeSingle();
+        let { data: membership } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id).limit(1).maybeSingle();
+        const supportTenant = new URLSearchParams(window.location.search).get("supportTenant");
+        if (supportTenant) {
+          const response = await fetch(`/api/admin/support-context?tenantId=${encodeURIComponent(supportTenant)}`, { cache: "no-store" });
+          if (response.ok) {
+            membership = { tenant_id: supportTenant, role: "owner" };
+            setSupportMode(true);
+          } else {
+            setNotice({ type: "error", text: "No fue posible abrir esta empresa en modo soporte." });
+          }
+        }
         setCurrentRole(membership?.role || "");
         let company = String(user.user_metadata?.company_name || "");
         if (membership?.tenant_id) {
           setTenantId(membership.tenant_id);
-          const { data: tenant } = await supabase.from("tenants").select("name, logo_url, widget_key").eq("id", membership.tenant_id).maybeSingle();
+          const { data: tenant } = await supabase.from("tenants").select("name, logo_url, widget_key, settings").eq("id", membership.tenant_id).maybeSingle();
           if (tenant?.name) company = tenant.name;
           const logoUrl = String(tenant?.logo_url || "");
           setTenantLogoUrl(logoUrl);
           setBrandingName(company);
           setBrandingLogoUrl(logoUrl);
           setWidgetKey(String(tenant?.widget_key || ""));
+          const configuredModules = Array.isArray(tenant?.settings?.modules) ? tenant.settings.modules.filter((item: unknown): item is string => typeof item === "string") : null;
+          setEnabledModules(configuredModules);
 
           const [assistantResult, knowledgeResult] = await Promise.all([
             supabase.from("assistant_settings").select("enabled, assistant_name, instructions, handoff_message").eq("tenant_id", membership.tenant_id).maybeSingle(),
@@ -588,10 +602,11 @@ export default function Dashboard() {
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand gavrion-brand tenant-brand">{tenantLogoUrl && !logoFailed ? <img className="tenant-logo" src={tenantLogoUrl} alt={`Logo de ${account.company || "la empresa"}`} onError={()=>setLogoFailed(true)} /> : <span className="brand-mark">{(account.company || "E").charAt(0).toUpperCase()}</span>}<span>{account.company || "Mi empresa"}</span></div>
-      <nav className="nav">{[["inicio","⌂","Inicio"],["conversaciones","◫","Conversaciones"],["inmobiliaria","▤","Inmobiliaria"],["contactos","♙","Contactos"],["pipeline","▦","Pipeline"],["equipo","♧","Equipo"],["automatizaciones","⌁","Automatizaciones"],["reportes","⌗","Reportes"],["auditoria","◉","Auditoría"]].map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&totalUnread>0&&<i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
+      <nav className="nav">{[["inicio","⌂","Inicio","dashboard"],["conversaciones","◫","Conversaciones","conversations"],["inmobiliaria","▤","Inmobiliaria","properties"],["contactos","♙","Contactos","contacts"],["pipeline","▦","Pipeline","pipeline"],["equipo","♧","Equipo","team"],["automatizaciones","⌁","Automatizaciones","automations"],["reportes","⌗","Reportes","reports"],["auditoria","◉","Auditoría","audit"]].filter(([, , , module])=>enabledModules===null||enabledModules.includes(module)).map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&totalUnread>0&&<i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
       <div className="sidebar-bottom"><button onClick={()=>navigate("configuracion")} className={`nav-item ${view==="configuracion"?"active":""}`}><span>⚙</span>Configuración</button><div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
     </aside>
     <main className="main">
+      {supportMode&&<div className="support-mode-banner"><strong>Modo soporte:</strong> estás operando dentro de {account.company}. Todas las acciones quedan registradas.<a href="/admin">Volver al panel</a></div>}
       <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div></header>
       {view === "inicio" && <section className="view active">
         <div className="hero-row"><div><h2>Todo avanza en la dirección correcta.</h2><p>Aquí tienes el resumen de tu equipo y tus clientes.</p></div><select className="select" aria-label="Filtrar periodo" value={period} onChange={e => setPeriod(e.target.value as Period)}><option value="30d">Últimos 30 días</option><option value="week">Esta semana</option><option value="year">Este año</option></select></div>
