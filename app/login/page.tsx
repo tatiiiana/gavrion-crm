@@ -24,11 +24,16 @@ export default function LoginPage() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
     const clearPassword = () => setPassword("");
     clearPassword();
     window.addEventListener("pageshow", clearPassword);
+    if (new URLSearchParams(window.location.search).get("access") === "created") setMessage({ type:"success", text:"Contraseña creada correctamente. Ya puedes iniciar sesión." });
+    const sessionReason=new URLSearchParams(window.location.search).get("session");
+    if(sessionReason==="idle")setMessage({type:"error",text:"La sesión se cerró por inactividad. Ingresa nuevamente."});
+    if(sessionReason==="maximum")setMessage({type:"error",text:"La sesión alcanzó su duración máxima. Ingresa nuevamente."});
     return () => window.removeEventListener("pageshow", clearPassword);
   }, []);
 
@@ -71,6 +76,16 @@ export default function LoginPage() {
     } finally { setPassword(""); setLoading(false); }
   }
 
+  async function requestRecovery() {
+    setErrors({}); setMessage(null);
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) { setErrors({ email:"Escribe primero el correo de la cuenta." }); return; }
+    const supabase=createClientSupabase(); if(!supabase)return;
+    setRecovering(true);
+    const { error }=await supabase.auth.resetPasswordForEmail(email.trim(),{redirectTo:`${window.location.origin}/invite?recovery=1`});
+    setRecovering(false);
+    setMessage(error?{type:"error",text:friendlyError(error.message)}:{type:"success",text:"Te enviamos un enlace para establecer una nueva contraseña."});
+  }
+
   function changeMode(next: "login" | "signup") { setMode(next); setErrors({}); setMessage(null); }
 
   return <main className="auth-shell">
@@ -87,6 +102,7 @@ export default function LoginPage() {
         <label>Contraseña<input name="gavrion-access-key" value={password} onChange={e=>setPassword(e.target.value)} type="password" aria-invalid={Boolean(errors.password)} autoComplete="new-password" data-form-type="other" data-lpignore="true" data-1p-ignore="true" spellCheck={false} />{errors.password&&<small className="field-error">{errors.password}</small>}{mode === "signup"&&!errors.password&&<small className="password-hint">8 caracteres, mayúscula, minúscula y número.</small>}</label>
         {message&&<div className={`auth-message ${message.type}`} role="status">{message.text}</div>}
         <button disabled={loading} className="primary-button auth-submit">{loading ? "Procesando…" : mode === "login" ? "Ingresar" : "Crear cuenta"}</button>
+        {mode==="login"&&<button type="button" className="auth-recovery" disabled={recovering} onClick={requestRecovery}>{recovering?"Enviando enlace…":"Olvidé mi contraseña"}</button>}
       </form>
     </section>
   </main>;
