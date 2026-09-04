@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Brasa & Olivo | Demo gastronómica</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="demo-ribbon">DEMO CON INFORMACIÓN FICTICIA · PROPUESTA GAVRION</div>
+    <main>
+      <section class="hero" id="inicio">
+        <nav>
+          <a class="brand" href="#inicio"><span>BRASA</span> & OLIVO</a>
+          <div class="nav-links"><a href="#menu">Menú</a><a href="#experiencia">Experiencia</a><button class="nav-book">Reservar mesa</button></div>
+        </nav>
+        <div class="hero-content">
+          <p class="eyebrow">COCINA DE FUEGO · CENTRO HISTÓRICO</p>
+          <h1>Sabores que<br /><em>se quedan.</em></h1>
+          <p class="hero-copy">Cocina de temporada, fuego vivo y una mesa pensada para compartir sin prisa.</p>
+          <div class="hero-actions"><a class="button button-light" href="#menu">Ver menú</a><button class="button button-outline nav-book">Reservar ahora</button></div>
+        </div>
+        <div class="hero-stamp">HECHO AL<br />MOMENTO<br /><span>●</span></div>
+      </section>
+
+      <section class="intro section-pad" id="experiencia">
+        <p class="eyebrow warm">UNA EXPERIENCIA QUE EMPIEZA ANTES DE LLEGAR</p>
+        <div class="intro-grid"><h2>La atención correcta, en el momento correcto.</h2><p>Esta demostración conecta el menú digital, un asistente para consultas y un panel de seguimiento. Cada mensaje, reserva o pedido se convierte en una oportunidad ordenada para el equipo.</p></div>
+        <div class="journey"><span>Consulta</span><i></i><span>Respuesta</span><i></i><span>Menú y reserva</span><i></i><span>Registro</span><i></i><strong>Seguimiento</strong></div>
+      </section>
+
+      <section class="menu-section section-pad" id="menu">
+        <div class="section-heading"><div><p class="eyebrow warm" id="tableLabel">MENÚ DIGITAL · MESA 08</p><h2>Elige tu antojo</h2></div><div class="menu-tools"><button class="qr-button" id="openQr">▦ QR de mesa</button><button class="cart-button" id="openCart">Pedido <b id="cartCount">0</b></button></div></div>
+        <div class="menu-tabs"><button class="active">Favoritos</button><button>Entradas</button><button>Principales</button><button>Postres</button></div>
+        <div class="menu-grid">
+          <article class="dish dish-one"><div class="dish-photo"><span>01</span></div><div class="dish-info"><div><h3>Pulpo a las brasas</h3><p>papas confitadas · alioli de chile seco</p></div><strong>L 285</strong></div><button class="add" data-item="Pulpo a las brasas" data-price="285">Agregar <span>+</span></button></article>
+          <article class="dish dish-two"><div class="dish-photo"><span>02</span></div><div class="dish-info"><div><h3>Risotto de hongos</h3><p>parmesano añejo · aceite de trufa</p></div><strong>L 240</strong></div><button class="add" data-item="Risotto de hongos" data-price="240">Agregar <span>+</span></button></article>
+          <article class="dish dish-three"><div class="dish-photo"><span>03</span></div><div class="dish-info"><div><h3>Costilla glaseada</h3><p>puré rústico · cebolla encurtida</p></div><strong>L 320</strong></div><button class="add" data-item="Costilla glaseada" data-price="320">Agregar <span>+</span></button></article>
+        </div>
+        <p class="menu-note">Demo funcional: el pedido se registra en la bandeja de cocina y en el CRM de ejemplo.</p>
+      </section>
+
+      <section class="operations section-pad">
+        <div class="operations-copy"><p class="eyebrow light">OPERACIÓN SIN MENSAJES PERDIDOS</p><h2>Un solo recorrido,<br />dos equipos alineados.</h2><p>Mientras cocina prepara el pedido, el equipo recibe datos útiles para atender, confirmar y volver a invitar.</p><button class="button button-light" id="showCrm">Ver CRM de ejemplo</button></div>
+        <div class="kitchen-card"><div class="kitchen-top"><span>COCINA · EN VIVO</span><b>03 pedidos</b></div><div class="ticket"><small>MESA 08 · AHORA</small><strong>Pulpo a las brasas</strong><p>+ limón extra · sin picante</p><em>EN PREPARACIÓN</em></div><div class="ticket subtle"><small>PARA LLEVAR · 18:40</small><strong>Risotto de hongos</strong><p>+ pan de masa madre</p></div></div>
+      </section>
+
+      <section class="proof section-pad"><p class="eyebrow warm">LO QUE ESTA DEMO RESUELVE</p><div class="proof-grid"><div><b>01</b><h3>Información actualizada</h3><p>Productos, horarios y disponibilidad se administran desde una fuente autorizada.</p></div><div><b>02</b><h3>Atención con criterio</h3><p>El asistente responde lo confirmado y deriva las excepciones a una persona.</p></div><div><b>03</b><h3>Seguimiento accionable</h3><p>Las conversaciones dejan de perderse en una bandeja y pasan a ser oportunidades.</p></div></div></section>
+
+      <footer><span>BRASA & OLIVO</span><p>Demo conceptual para una empresa gastronómica.</p><button class="nav-book">Solicitar una reserva</button></footer>
+    </main>
+
+    <aside class="chat" id="chat"><button class="chat-head" id="closeChat">×</button><div class="chat-title"><span>BO</span><div><b>Asistente Brasa & Olivo</b><small>En línea · respuestas de demo</small></div></div><div class="chat-messages" id="messages"><div class="bot">¡Hola! Soy el asistente de Brasa & Olivo. ¿Buscas reservar, ver el menú o consultar horarios?</div></div><div class="quick"><button>Reservar mesa</button><button>Horario de hoy</button><button>Recomiéndame algo</button></div><form id="chatForm"><input id="chatInput" placeholder="Escribe tu consulta..." /><button>Enviar</button></form></aside>
+    <button class="chat-fab" id="openChat"><span>✦</span> Consultar</button>
+
+    <div class="modal" id="cartModal"><div class="modal-panel"><button class="modal-close">×</button><p class="eyebrow warm" id="cartTableLabel">MESA 08 · PEDIDO DIGITAL</p><h2>Tu pedido</h2><div id="cartItems" class="cart-items"><p class="empty">Aún no has agregado platos.</p></div><div class="cart-total"><span>Total</span><strong id="cartTotal">L 0</strong></div><button class="button button-dark" id="sendOrder">Enviar a cocina</button></div></div>
+    <div class="modal" id="qrModal"><div class="modal-panel qr-panel"><button class="modal-close">×</button><p class="eyebrow warm">ACCESO POR MESA</p><h2>Escanea y ordena</h2><p class="qr-copy">Este código abre el menú con la mesa <b id="qrTable">08</b> identificada.</p><img id="qrImage" class="qr-image" alt="Código QR para abrir el menú de la mesa" /><code id="qrUrl"></code><div class="qr-actions"><button class="button button-dark" id="copyQrLink">Copiar enlace</button><button class="button scanner-trigger" id="openScanner">Escanear con cámara</button></div></div></div>
+    <div class="modal" id="scannerModal"><div class="modal-panel scanner-panel"><button class="modal-close" id="stopScanner">×</button><p class="eyebrow warm">LECTOR DE QR</p><h2>Escanear código</h2><p class="scanner-copy">Apunta la cámara al QR de una mesa. El sistema abrirá su menú identificado.</p><div class="scanner-frame"><video id="scannerVideo" playsinline muted></video><div class="scanner-line"></div><p id="scannerStatus">Listo para activar la cámara.</p></div><button class="button button-dark" id="startScanner">Activar cámara</button><p class="camera-note">La cámara solo se usa en este dispositivo y requiere permiso del navegador.</p></div></div>
+    <div class="modal" id="crmModal"><div class="modal-panel crm"><button class="modal-close">×</button><p class="eyebrow warm">CRM · DEMOSTRACIÓN</p><h2>Oportunidades de hoy</h2><div class="crm-columns"><div><span>NUEVA CONSULTA</span><article><b>Valeria M.</b><p>Preguntó por reserva para 6</p><small>Instagram · hace 4 min</small></article></div><div><span>INTERESADO</span><article><b>Carlos P.</b><p>Revisó menú y pidió recomendación</p><small>WhatsApp · hace 12 min</small></article></div><div><span>SEGUIMIENTO</span><article><b>Ana R.</b><p>Reserva pendiente de confirmar</p><small>Web · ayer</small></article></div></div></div></div>
+    <div class="toast" id="toast">Pedido enviado a cocina y registrado para seguimiento.</div>
+    <script src="site-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
