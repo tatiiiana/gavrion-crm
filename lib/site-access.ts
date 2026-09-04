@@ -1,0 +1,2 @@
+import {requirePlatformPermission,type PlatformCapability} from "@/lib/platform-access";
+export async function requireSitePermission(capability:PlatformCapability,siteId:string){const access=await requirePlatformPermission(capability);if(!access)return null;const project=await access.admin.from("site_projects").select("id,tenant_id").eq("id",siteId).maybeSingle();if(!project.data)return null;if(access.tenantIds&&!access.tenantIds.includes(project.data.tenant_id))return null;return{...access,project:project.data}}
