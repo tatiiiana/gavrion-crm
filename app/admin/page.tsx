@@ -7,6 +7,7 @@ import { createClientSupabase } from "@/lib/supabase/client";
 type Owner = { id: string; name: string; email: string } | null;
 type Implementation = { id: string; name: string; slug: string; plan: string; template_key: string; implementation_template_id:string|null; implementation_status: string; settings: { modules?: string[] }; created_at: string; owner: Owner };
 type ImplementationTemplate = { id:string; key:string; name:string; description:string; business_type:string; configuration:{ modules?:string[]; knowledge?:unknown[]; automations?:unknown[] }; source_tenant_id:string|null; is_system:boolean; created_at:string };
+type SiteProject = { id:string; tenant_id:string; template_key:string; name:string; slug:string; status:string; updated_at:string; tenant:{id:string;name:string}|null };
 
 const moduleOptions = [
   ["dashboard","Inicio"],["conversations","Conversaciones"],["contacts","Contactos"],["pipeline","Pipeline"],
@@ -21,7 +22,8 @@ const statusLabels: Record<string, string> = { draft:"Borrador", configuring:"Co
 export default function SuperadminPage() {
   const [items, setItems] = useState<Implementation[]>([]);
   const [templates, setTemplates] = useState<ImplementationTemplate[]>([]);
-  const [section, setSection] = useState<"companies"|"templates">("companies");
+  const [sites, setSites] = useState<SiteProject[]>([]);
+  const [section, setSection] = useState<"companies"|"templates"|"sites">("companies");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -43,11 +45,12 @@ export default function SuperadminPage() {
   async function load() {
     setLoading(true);
     try {
-      const [companiesResponse, templatesResponse] = await Promise.all([fetch("/api/admin/implementations", { cache:"no-store" }),fetch("/api/admin/templates", { cache:"no-store" })]);
-      const [companiesData, templatesData] = await Promise.all([companiesResponse.json(),templatesResponse.json()]);
+      const [companiesResponse, templatesResponse, sitesResponse] = await Promise.all([fetch("/api/admin/implementations", { cache:"no-store" }),fetch("/api/admin/templates", { cache:"no-store" }),fetch("/api/admin/sites",{cache:"no-store"})]);
+      const [companiesData, templatesData, sitesData] = await Promise.all([companiesResponse.json(),templatesResponse.json(),sitesResponse.json()]);
       if (!companiesResponse.ok) throw new Error(companiesData.error || "No fue posible cargar las empresas.");
       if (!templatesResponse.ok) throw new Error(templatesData.error || "No fue posible cargar las plantillas.");
-      setItems(companiesData); setTemplates(templatesData);
+      if (!sitesResponse.ok) throw new Error(sitesData.error || "No fue posible cargar los sitios.");
+      setItems(companiesData); setTemplates(templatesData); setSites(sitesData);
       if (templatesData.length) { setTemplateId((current:string)=>current || templatesData[0].id); setModules((current:string[])=>current.length ? current : (templatesData[0].configuration?.modules || [])); }
     } catch (error) { setNotice({ kind:"error", text:error instanceof Error ? error.message : "No fue posible cargar." }); }
     finally { setLoading(false); }
@@ -84,25 +87,28 @@ export default function SuperadminPage() {
   async function changeStatus(tenantId: string, status: string) {
     if(statusSaving)return;
     const previous=items.find(item=>item.id===tenantId)?.implementation_status||"draft";
+    let reason="";
+    if(["suspended","archived"].includes(status)){reason=window.prompt(status==="suspended"?"Indica el motivo de la suspensión:":"Indica el motivo del archivo:")?.trim()||"";if(!reason){setNotice({kind:"error",text:"El cambio fue cancelado porque el motivo es obligatorio."});return;}}
     setStatusSaving(tenantId); setNotice(null);
     setItems(current=>current.map(item=>item.id===tenantId?{...item,implementation_status:status}:item));
-    try{const response = await fetch("/api/admin/implementations", { method:"PATCH", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ tenantId, status }) });const raw=await response.text();const data=raw?JSON.parse(raw):{};if (!response.ok) throw new Error(data.error||"No se pudo actualizar el estado.");setNotice({kind:"success",text:`Estado actualizado a ${statusLabels[status]}.`});}
+    try{const response = await fetch("/api/admin/implementations", { method:"PATCH", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ tenantId, status, reason }) });const raw=await response.text();const data=raw?JSON.parse(raw):{};if (!response.ok) throw new Error(data.error||"No se pudo actualizar el estado.");setNotice({kind:"success",text:`Estado actualizado a ${statusLabels[status]}.`});}
     catch(error){setItems(current=>current.map(item=>item.id===tenantId?{...item,implementation_status:previous}:item));setNotice({kind:"error",text:error instanceof Error?error.message:"No se pudo actualizar el estado."})}
     finally{setStatusSaving(null)}
   }
 
   async function cloneTemplate(event:FormEvent){event.preventDefault();setSaving(true);setNotice(null);try{const response=await fetch("/api/admin/templates",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceTenantId:cloneSourceId,name:cloneName,description:cloneDescription})});const data=await response.json();if(!response.ok)throw new Error(data.error||"No se pudo crear la plantilla.");setTemplates(current=>[data,...current]);setShowCloneForm(false);setCloneSourceId("");setCloneName("");setCloneDescription("");setNotice({kind:"success",text:`La plantilla ${data.name} quedó lista para reutilizar.`});}catch(error){setNotice({kind:"error",text:error instanceof Error?error.message:"No se pudo clonar."});}finally{setSaving(false)}}
   async function archiveTemplate(id:string){if(!window.confirm("¿Archivar esta plantilla personalizada?"))return;const response=await fetch("/api/admin/templates",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({id,action:"archive"})});const data=await response.json();if(!response.ok){setNotice({kind:"error",text:data.error||"No se pudo archivar."});return}setTemplates(current=>current.filter(item=>item.id!==id));setNotice({kind:"success",text:"Plantilla archivada."})}
+  async function createSite(tenantId:string){setSaving(true);setNotice(null);try{const response=await fetch("/api/admin/sites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tenantId,templateKey:"gastronomia-a"})});const data=await response.json();if(!response.ok)throw new Error(data.error||"No se pudo preparar el sitio.");window.location.href=`/admin/sites/${data.id}`}catch(error){setNotice({kind:"error",text:error instanceof Error?error.message:"No se pudo preparar el sitio."});setSaving(false)}}
   async function logout(){if(loggingOut)return;setLoggingOut(true);const supabase=createClientSupabase();if(supabase)await supabase.auth.signOut({scope:"local"});window.location.replace("/login")}
 
   return <main className="superadmin-shell">
     <aside className="superadmin-sidebar">
       <div className="superadmin-brand"><span>G</span><div><strong>Gavrion</strong><small>Control de implementaciones</small></div></div>
-      <nav><button className={section==="companies"?"active":""} onClick={()=>setSection("companies")}>▦ Empresas</button><button className={section==="templates"?"active":""} onClick={()=>setSection("templates")}>◇ Plantillas</button><a href="/dashboard">⌂ Mi CRM</a></nav>
+      <nav><button className={section==="companies"?"active":""} onClick={()=>setSection("companies")}>▦ Empresas</button><button className={section==="templates"?"active":""} onClick={()=>setSection("templates")}>◇ Plantillas</button><button className={section==="sites"?"active":""} onClick={()=>setSection("sites")}>▤ Sitios web</button><a href="/dashboard">⌂ Mi CRM</a></nav>
       <div className="superadmin-session"><div className="superadmin-identity"><span>SA</span><div><strong>Superadministrador</strong><small>Acceso interno Gavrion</small></div></div><button className="superadmin-logout" disabled={loggingOut} onClick={()=>void logout()}><span>↪</span>{loggingOut?"Cerrando sesión…":"Cerrar sesión"}</button></div>
     </aside>
     <section className="superadmin-main">
-      <header><div><p>PLATAFORMA GAVRION</p><h1>{section==="companies"?"Implementaciones":"Plantillas de CRM"}</h1></div><button className="admin-primary" onClick={()=>section==="companies"?setShowForm(true):setShowCloneForm(true)}>＋ {section==="companies"?"Nueva implementación":"Crear desde una empresa"}</button></header>
+      <header><div><p>PLATAFORMA GAVRION</p><h1>{section==="companies"?"Implementaciones":section==="templates"?"Plantillas de CRM":"Editor de sitios"}</h1></div>{section!=="sites"&&<button className="admin-primary" onClick={()=>section==="companies"?setShowForm(true):setShowCloneForm(true)}>＋ {section==="companies"?"Nueva implementación":"Crear desde una empresa"}</button>}</header>
       <div className="superadmin-content">
         {notice&&<div className={`admin-notice ${notice.kind}`}>{notice.text}<button onClick={()=>setNotice(null)}>×</button></div>}
         {section==="companies"&&<><section className="admin-stats">
@@ -124,6 +130,7 @@ export default function SuperadminPage() {
           </tbody></table></div>
         </section></>}
         {section==="templates"&&<section className="templates-library"><div className="templates-intro"><div><h2>Biblioteca de plantillas</h2><p>Cada plantilla conserva módulos, configuración del asistente, conocimiento, automatizaciones, horario y ajustes reutilizables.</p></div><span>{templates.length} disponibles</span></div><div className="template-library-grid">{templates.map(template=><article key={template.id}><div className="template-card-top"><span>{template.business_type.slice(0,2).toUpperCase()}</span>{template.is_system&&<i>Base Gavrion</i>}</div><h3>{template.name}</h3><p>{template.description||"Plantilla personalizada creada desde una implementación."}</p><div className="template-summary"><span>{template.configuration.modules?.length||0} módulos</span><span>{template.configuration.knowledge?.length||0} documentos</span><span>{template.configuration.automations?.length||0} flujos</span></div><div className="template-card-actions"><button onClick={()=>{selectTemplate(template.id);setSection("companies");setShowForm(true)}}>Usar plantilla</button>{!template.is_system&&<button className="archive-template" onClick={()=>void archiveTemplate(template.id)}>Archivar</button>}</div></article>)}</div></section>}
+        {section==="sites"&&<section className="templates-library"><div className="templates-intro"><div><h2>Sitios gastronómicos</h2><p>Personaliza Gastronomía A, previsualiza el resultado y genera el proyecto independiente del cliente.</p></div><span>{sites.length} proyectos</span></div><div className="site-project-grid">{items.map(company=>{const site=sites.find(item=>item.tenant_id===company.id);return <article key={company.id}><div className="site-project-preview"><span>GASTRONOMÍA A</span><strong>{site?.name||company.name}</strong></div><div><h3>{company.name}</h3><p>{site?`Última edición: ${new Date(site.updated_at).toLocaleDateString("es-HN")}`:"Todavía no tiene un sitio gastronómico."}</p><span className={`site-status ${site?.status||"new"}`}>{site?({draft:"Borrador",review:"En revisión",ready:"Listo",exported:"Exportado"} as Record<string,string>)[site.status]||site.status:"Nuevo"}</span><button disabled={saving} onClick={()=>site?window.location.assign(`/admin/sites/${site.id}`):void createSite(company.id)}>{site?"Abrir editor":"Crear con Gastronomía A"}</button></div></article>})}</div></section>}
       </div>
     </section>
     {showForm&&<div className="implementation-modal" role="dialog" aria-modal="true"><form onSubmit={createImplementation} noValidate>
