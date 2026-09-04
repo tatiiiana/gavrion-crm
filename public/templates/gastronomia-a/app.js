@@ -20,7 +20,9 @@ function applySiteConfig(){
   if(brand.backgroundColor)root.style.setProperty('--paper',brand.backgroundColor);
   if(brand.surfaceColor)root.style.setProperty('--cream',brand.surfaceColor);
   const brandLabel=String(brand.name||'Brasa & Olivo');
-  q('.brand').textContent=brandLabel; q('footer>span').textContent=brandLabel.toUpperCase();
+  const brandElement=q('.brand');brandElement.textContent=brandLabel;
+  if(brand.logoUrl){const logo=document.createElement('img');logo.src=brand.logoUrl;logo.alt=`Logo de ${brandLabel}`;logo.className='brand-logo';brandElement.prepend(logo);}
+  q('.chat-title>span').textContent=brand.shortName||brandLabel.slice(0,2).toUpperCase();q('.chat-title b').textContent=`Asistente ${brandLabel}`;q('footer>span').textContent=brandLabel.toUpperCase();
   if(hero.imageUrl)q('.hero').style.backgroundImage=`linear-gradient(115deg,rgba(20,25,18,.88),rgba(25,29,21,.25)),url('${hero.imageUrl}')`;
   q('.hero-content .eyebrow').textContent=hero.eyebrow||'';
   q('.hero-content h1').innerHTML=String(hero.title||'').replace(/\s+([^\s]+)$/,'<br><em>$1</em>');
@@ -29,6 +31,7 @@ function applySiteConfig(){
   q('.menu-section .section-heading h2').textContent=menu.title||'Menú';
   q('.menu-tabs').innerHTML=(menu.categories||[]).map((name,index)=>`<button class="${index===0?'active':''}" data-category="${name}">${name}</button>`).join('');
   renderMenuItems(menu.items||[]);
+  renderLocationAndGallery();
   const integrations=config.integrations||{};
   if(integrations.useRealChatbox&&integrations.tenantKey){
     q('#chat').hidden=true;q('#openChat').hidden=true;
@@ -37,9 +40,11 @@ function applySiteConfig(){
 }
 function renderMenuItems(items){
   const symbol=config.menu?.currencySymbol||'L';
-  q('.menu-grid').innerHTML=items.filter(item=>item.active!==false).map((item,index)=>`<article class="dish" data-category="${item.category||''}"><div class="dish-photo" style="background-image:linear-gradient(#0002,#0002),url('${item.imageUrl||''}')"><span>${String(index+1).padStart(2,'0')}</span></div><div class="dish-info"><div><h3>${item.name}</h3><p>${item.description||''}</p></div><strong>${symbol} ${Number(item.price||0).toLocaleString('es-HN')}</strong></div><button class="add" data-item="${item.name}" data-price="${Number(item.price||0)}">Agregar <span>+</span></button></article>`).join('');
+  q('.menu-grid').innerHTML=items.filter(item=>item.active!==false).map((item,index)=>{const available=isAvailable(item),price=item.promotion?.enabled&&item.promotion.price?item.promotion.price:item.price;const options=[...(item.sizes||[]),...(item.extras||[])];return `<article class="dish" data-category="${item.category||''}"><div class="dish-photo" style="background-image:linear-gradient(#0002,#0002),url('${item.imageUrl||''}')"><span>${String(index+1).padStart(2,'0')}</span>${item.promotion?.enabled?`<em>${item.promotion.label||'PROMOCIÓN'}</em>`:''}</div><div class="dish-info"><div><h3>${item.name}</h3><p>${item.description||''}</p>${options.length?`<small>${options.map(x=>`${x.name}${x.price?` +${symbol}${x.price}`:''}`).join(' · ')}</small>`:''}</div><strong>${item.promotion?.enabled?`<del>${symbol} ${Number(item.price).toLocaleString('es-HN')}</del><br>`:''}${symbol} ${Number(price||0).toLocaleString('es-HN')}</strong></div><button class="add" ${available?'':'disabled'} data-item="${item.name}" data-price="${Number(price||0)}">${available?'Agregar':'No disponible'} <span>+</span></button></article>`}).join('');
   qa('.menu-tabs button').forEach(button=>button.onclick=()=>{qa('.menu-tabs button').forEach(x=>x.classList.remove('active'));button.classList.add('active');const category=button.dataset.category;qa('.dish').forEach(dish=>dish.hidden=category!=='Favoritos'&&dish.dataset.category!==category)});
 }
+function isAvailable(item){const availability=item.availability;if(!availability)return true;const days=['dom','lun','mar','mié','jue','vie','sáb'];const now=new Date(),day=days[now.getDay()],time=now.toTimeString().slice(0,5);return availability.days?.includes(day)&&time>=availability.start&&time<=availability.end}
+function renderLocationAndGallery(){const gallery=config.gallery||[],contact=config.contact||{},social=config.social||{};let section=q('#siteDetails');if(!section){section=document.createElement('section');section.id='siteDetails';section.className='site-details section-pad';q('footer').before(section)}section.innerHTML=`${gallery.length?`<div class="site-gallery">${gallery.map(url=>`<img src="${url}" alt="Galería de ${config.brand?.name||'restaurante'}">`).join('')}</div>`:''}<div class="site-contact"><div><p class="eyebrow warm">VISÍTANOS</p><h2>${contact.address||''}</h2><p>${contact.schedule||''} · ${contact.phone||''}</p><div class="social-links">${Object.entries(social).filter(([,url])=>url).map(([name,url])=>`<a href="${url}" target="_blank" rel="noreferrer">${name}</a>`).join('')}</div></div>${contact.mapUrl?`<a class="map-link" href="${contact.mapUrl}" target="_blank" rel="noreferrer">Abrir ubicación en el mapa ↗</a>`:''}</div>`}
 
 applySiteConfig();
 
