@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requirePlatformAdmin } from "@/lib/platform-admin";
+import { requirePlatformPermission } from "@/lib/platform-access";
 
 const templates: Record<string, string[]> = {
   generic: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget"],
@@ -23,11 +23,12 @@ function cleanSlug(value: string) {
 }
 
 export async function GET() {
-  const access = await requirePlatformAdmin();
+  const access = await requirePlatformPermission("companies.read");
   if (!access) return NextResponse.json({ error: "Acceso exclusivo para Superadministradores." }, { status: 403 });
   const { admin } = access;
+  let tenantQuery=admin.from("tenants").select("id,name,slug,plan,logo_url,settings,template_key,implementation_template_id,implementation_status,created_at").order("created_at", { ascending: false });if(access.tenantIds)tenantQuery=tenantQuery.in("id",access.tenantIds.length?access.tenantIds:["00000000-0000-0000-0000-000000000000"]);
   const [{ data: tenants, error }, { data: memberships }, { data: users }] = await Promise.all([
-    admin.from("tenants").select("id,name,slug,plan,logo_url,settings,template_key,implementation_template_id,implementation_status,created_at").order("created_at", { ascending: false }),
+    tenantQuery,
     admin.from("memberships").select("tenant_id,user_id,role").eq("role", "owner"),
     admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
   ]);
@@ -41,7 +42,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const access = await requirePlatformAdmin();
+  const access = await requirePlatformPermission("companies.create");
   if (!access) return NextResponse.json({ error: "Acceso exclusivo para Superadministradores." }, { status: 403 });
   const { admin, user } = access;
   const body = await request.json();
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
     settings: { ...(configuration.tenant_settings || {}), modules, onboarding: { created_by: user.id, created_at: new Date().toISOString(), template_id:selectedTemplate.id } }
   }).select("id,name,slug,template_key,implementation_status,settings,created_at").single();
   if (tenantError || !tenant) return NextResponse.json({ error: tenantError?.message || "No se pudo crear la empresa." }, { status: 400 });
+  if(access.role!=="superadmin")await admin.from("platform_staff_tenants").upsert({user_id:user.id,tenant_id:tenant.id});
 
   let owner = (await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })).data.users.find(item => item.email?.toLowerCase() === ownerEmail);
   if (owner) {
@@ -103,13 +105,20 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const access = await requirePlatformAdmin();
+  const access = await requirePlatformPermission("companies.create");
   if (!access) return NextResponse.json({ error: "Acceso exclusivo para Superadministradores." }, { status: 403 });
   const body = await request.json();
   const tenantId = String(body.tenantId || "");
   const status = String(body.status || "");
+  const reason = String(body.reason || "").trim().slice(0, 500);
   const allowed = ["draft","configuring","testing","ready","production","suspended","archived"];
   if (!tenantId || !allowed.includes(status)) return NextResponse.json({ error: "Estado inválido." }, { status: 400 });
-  const { data, error } = await access.admin.from("tenants").update({ implementation_status: status }).eq("id", tenantId).select("id,implementation_status").single();
+  if (["suspended","archived"].includes(status) && reason.length < 3) return NextResponse.json({ error:"Debes indicar el motivo de este estado." }, { status:400 });
+  const now = new Date().toISOString();
+  const lifecycle: Record<string, unknown> = { implementation_status:status, status_reason:reason || null };
+  if (status === "production") lifecycle.production_at = now;
+  if (status === "suspended") lifecycle.suspended_at = now;
+  if (status === "archived") lifecycle.archived_at = now;
+  const { data, error } = await access.admin.from("tenants").update(lifecycle).eq("id", tenantId).select("id,implementation_status,status_reason,production_at,suspended_at,archived_at").single();
   return error ? NextResponse.json({ error: error.message }, { status: 400 }) : NextResponse.json(data);
 }

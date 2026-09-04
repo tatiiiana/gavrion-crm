@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
-import { requirePlatformAdmin } from "@/lib/platform-admin";
+import { requirePlatformPermission } from "@/lib/platform-access";
 
 function templateKey(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 55);
 }
 
 export async function GET() {
-  const access = await requirePlatformAdmin();
+  const access = await requirePlatformPermission("templates.read");
   if (!access) return NextResponse.json({ error:"Acceso exclusivo para Superadministradores." }, { status:403 });
   const { data, error } = await access.admin.from("implementation_templates").select("id,key,name,description,business_type,configuration,source_tenant_id,is_system,active,created_at,updated_at").eq("active", true).order("is_system", { ascending:false }).order("created_at", { ascending:false });
   return error ? NextResponse.json({ error:error.message }, { status:400 }) : NextResponse.json(data || []);
 }
 
 export async function POST(request: Request) {
-  const access = await requirePlatformAdmin();
+  const access = await requirePlatformPermission("templates.write");
   if (!access) return NextResponse.json({ error:"Acceso exclusivo para Superadministradores." }, { status:403 });
   const body = await request.json();
   const sourceTenantId = String(body.sourceTenantId || "");
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const access = await requirePlatformAdmin();
+  const access = await requirePlatformPermission("templates.write");
   if (!access) return NextResponse.json({ error:"Acceso exclusivo para Superadministradores." }, { status:403 });
   const body = await request.json();
   const id = String(body.id || "");

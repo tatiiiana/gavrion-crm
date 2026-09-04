@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { requirePlatformAdmin } from "@/lib/platform-admin";
+import { requirePlatformPermission } from "@/lib/platform-access";
 
 export async function GET() {
-  const access = await requirePlatformAdmin();
-  return NextResponse.json({ isPlatformAdmin: Boolean(access) });
+  const access = await requirePlatformPermission("companies.read");
+  return NextResponse.json({ isPlatformAdmin: access?.role==="superadmin", isPlatformStaff:Boolean(access),role:access?.role||null,capabilities:access?.capabilities||[] });
 }
