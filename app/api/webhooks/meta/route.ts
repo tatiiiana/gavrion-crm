@@ -26,7 +26,7 @@ function messageText(message: Record<string, any>) {
 
 async function tenantAcceptsChannels(supabase: ReturnType<typeof createAdminSupabase>, tenantId: string) {
   const { data } = await supabase.from("tenants").select("implementation_status").eq("id", tenantId).maybeSingle();
-  return Boolean(data && ["testing", "production"].includes(data.implementation_status || "draft"));
+  return Boolean(data && ["testing", "ready", "production"].includes(data.implementation_status || "draft"));
 }
 
 export async function POST(request: Request) {
