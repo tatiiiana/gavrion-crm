@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { graphBase, graphRequest } from "@/lib/meta/client";
+import { encryptCredential } from "@/lib/security/credentials";
 
 export async function GET(request: Request) {
   const url = new URL(request.url); const code = url.searchParams.get("code"); const state = url.searchParams.get("state"); const errorMessage = url.searchParams.get("error_description");
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
       if (!page.id || !page.access_token) throw new Error(`Meta no entregó acceso completo para ${page.name || "la página seleccionada"}.`);
       const pageConnection = await admin.from("channel_connections").upsert({ tenant_id: oauth.tenant_id, provider: "facebook", external_account_id: page.id, status: "active", settings: { display_name: page.name } }, { onConflict: "tenant_id,provider,external_account_id" }).select("id").single();
       if (pageConnection.error || !pageConnection.data) throw new Error(`No se pudo guardar ${page.name}: ${pageConnection.error?.message || "conexión inválida"}. Verifica la migración 014_meta_production.sql.`);
-      const credential = await admin.from("meta_channel_credentials").upsert({ connection_id: pageConnection.data.id, access_token: page.access_token, expires_at: new Date(Date.now() + expiresIn * 1000).toISOString() });
+      const credential = await admin.from("meta_channel_credentials").upsert({ connection_id: pageConnection.data.id, access_token: encryptCredential(page.access_token), expires_at: new Date(Date.now() + expiresIn * 1000).toISOString() });
       if (credential.error) throw new Error(`No se pudo guardar el token de ${page.name}: ${credential.error.message}`);
       await graphRequest(`${page.id}/subscribed_apps?subscribed_fields=messages,messaging_postbacks,message_deliveries,message_reads`, page.access_token, { method: "POST" });
     }
