@@ -17,6 +17,8 @@ function matches(payload: Record<string, unknown>, conditions: Condition[]) {
 
 export async function runAutomations(input: AutomationEvent) {
   const supabase = createAdminSupabase();
+  const { data: tenant } = await supabase.from("tenants").select("implementation_status").eq("id", input.tenantId).maybeSingle();
+  if (!tenant || !["testing", "ready", "production"].includes(tenant.implementation_status || "draft")) return;
   const { data: flows } = await supabase.from("automation_flows").select("id, conditions, actions").eq("tenant_id", input.tenantId).eq("trigger_event", input.event).eq("enabled", true);
   for (const flow of flows || []) {
     const conditions = Array.isArray(flow.conditions) ? flow.conditions as Condition[] : [];
@@ -45,4 +47,3 @@ export async function runAutomations(input: AutomationEvent) {
     }
   }
 }
-
