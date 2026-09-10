@@ -12,6 +12,15 @@
   --sky-shadow:0 8px 24px rgba(42,48,94,.07);
 }
 
+/* Formulario Meta: cada campo conserva su propia columna y nunca invade al siguiente. */
+.meta-connections .whatsapp-connect{width:100%;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;overflow:hidden}
+.meta-connections .whatsapp-connect label{min-width:0;align-content:start;color:#44475d;font-size:11px;line-height:1.35}
+.meta-connections .whatsapp-connect label>span{display:block;min-height:16px}
+.meta-connections .whatsapp-connect input{display:block;box-sizing:border-box;min-width:0;width:100%;height:44px;background:#fff;font:inherit}
+.meta-connections .whatsapp-connect label small{color:var(--sky-muted);font-size:9px;font-weight:400}
+.meta-connections .whatsapp-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+@media(max-width:760px){.meta-connections .whatsapp-connect{grid-template-columns:minmax(0,1fr);padding:14px}.meta-connections .whatsapp-actions{grid-column:auto;display:grid}.meta-connections .whatsapp-actions button{width:100%}}
+
 html{background:#e9ecf5}
 body{background:#e9ecf5;color:var(--sky-ink);font-family:Inter,"Segoe UI",Arial,sans-serif}
 h1,h2,h3,h4,h5,h6,.brand,.topbar h1,.hero-row h2,.section-heading h2,.panel-header h3{font-family:Inter,"Segoe UI",Arial,sans-serif!important}

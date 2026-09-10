@@ -72,7 +72,7 @@ export function MetaConnections(){
 
   return <article className="panel meta-connections">
     <div className="meta-connections-head">
-      <div className="meta-heading"><span className="meta-symbol">M</span><div><p className="eyebrow">META EN PRODUCCIÓN</p><h3>Canales de mensajería</h3><p>Conecta las cuentas propias de esta empresa. Las credenciales permanecen protegidas en el servidor.</p></div></div>
+      <div className="meta-heading"><span className="meta-symbol">M</span><div><p className="eyebrow">META EN PRODUCCIÓN</p><h3>Canales de mensajería</h3><p>Conecta las cuentas propias de esta empresa. Los tokens se cifran antes de guardarse y nunca se muestran nuevamente.</p></div></div>
       <div className="meta-connect-actions">
         <button type="button" className="primary-button" onClick={connectMeta} disabled={connectingMeta}>{connectingMeta?"Abriendo Meta…":"Conectar Facebook Messenger"}</button>
         <button type="button" className="secondary-button" onClick={()=>setShowWhatsapp(value=>!value)}>{showWhatsapp?"Cerrar WhatsApp":"Conectar WhatsApp"}</button>
@@ -80,10 +80,10 @@ export function MetaConnections(){
     </div>
     {message&&<div className={`auth-message ${messageType}`}>{message}</div>}
     {showWhatsapp&&<form className="whatsapp-connect" onSubmit={saveWhatsapp}>
-      <label>Nombre visible<input required value={form.displayName} onChange={event=>setForm(value=>({...value,displayName:event.target.value}))} placeholder="WhatsApp Metro"/></label>
-      <label>Phone Number ID<input required value={form.phoneNumberId} onChange={event=>setForm(value=>({...value,phoneNumberId:event.target.value}))}/></label>
-      <label>WhatsApp Business Account ID<input value={form.businessAccountId} onChange={event=>setForm(value=>({...value,businessAccountId:event.target.value}))}/></label>
-      <label>Token permanente<input required type="password" autoComplete="new-password" value={form.accessToken} onChange={event=>setForm(value=>({...value,accessToken:event.target.value}))}/></label>
+      <label><span>Nombre visible</span><input required value={form.displayName} onChange={event=>setForm(value=>({...value,displayName:event.target.value}))} placeholder="WhatsApp de la empresa"/></label>
+      <label><span>Phone Number ID</span><input required inputMode="numeric" value={form.phoneNumberId} onChange={event=>setForm(value=>({...value,phoneNumberId:event.target.value}))} placeholder="Ej. 1270090499526634"/></label>
+      <label><span>WhatsApp Business Account ID</span><input inputMode="numeric" value={form.businessAccountId} onChange={event=>setForm(value=>({...value,businessAccountId:event.target.value}))} placeholder="Ej. 3540045776153616"/></label>
+      <label><span>Token permanente</span><input required type="password" autoComplete="new-password" value={form.accessToken} onChange={event=>setForm(value=>({...value,accessToken:event.target.value}))} placeholder="••••••••••••••••"/><small>Se cifrará al guardar.</small></label>
       <div className="whatsapp-actions"><button className="primary-button" disabled={loading}>{loading?"Conectando…":"Guardar conexión"}</button><button type="button" className="ghost-button" onClick={()=>setShowWhatsapp(false)}>Cancelar</button></div>
     </form>}
     <div className="connection-list">{connections.length?connections.map(item=><div className="connection-row" key={item.id}>
