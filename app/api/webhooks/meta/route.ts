@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { runAutomations } from "@/lib/automations/engine";
 import { findMetaConnection, graphRequest } from "@/lib/meta/client";
+import { respondToMetaConversation } from "@/lib/ai/respond-meta";
 
 export const runtime = "nodejs";
 
@@ -23,6 +24,11 @@ function messageText(message: Record<string, any>) {
   return message.text?.body || message.button?.text || message.interactive?.button_reply?.title || message.interactive?.list_reply?.title || message.image?.caption || message.document?.caption || `[${message.type || "mensaje"}]`;
 }
 
+async function tenantAcceptsChannels(supabase: ReturnType<typeof createAdminSupabase>, tenantId: string) {
+  const { data } = await supabase.from("tenants").select("implementation_status").eq("id", tenantId).maybeSingle();
+  return Boolean(data && ["testing", "production"].includes(data.implementation_status || "draft"));
+}
+
 export async function POST(request: Request) {
   const raw = await request.text();
   if (!verifySignature(raw, request.headers.get("x-hub-signature-256") || "")) return new Response("Invalid signature", { status: 401 });
@@ -41,6 +47,7 @@ export async function POST(request: Request) {
       const { data: connection } = await supabase.from("channel_connections").select("id, tenant_id").eq("provider", "whatsapp").eq("external_account_id", phoneNumberId).eq("status", "active").maybeSingle();
       if (!connection) continue;
       const tenantId = connection.tenant_id;
+      if (!(await tenantAcceptsChannels(supabase, tenantId))) continue;
 
       for (const status of value.statuses || []) {
         const { data: sentMessage } = await supabase.from("messages").select("id, metadata").eq("tenant_id", tenantId).eq("external_message_id", status.id).maybeSingle();
@@ -63,6 +70,10 @@ export async function POST(request: Request) {
         const text = messageText(incoming);
         await supabase.from("messages").insert({ tenant_id: tenantId, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: incoming.id, metadata: { type: incoming.type, raw: incoming } });
         await runAutomations({ tenantId, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profile, channel: "whatsapp", text } });
+        try {
+          const { data: tenant } = await supabase.from("tenants").select("name").eq("id", tenantId).single();
+          await respondToMetaConversation({ tenantId, tenantName: tenant?.name || "la empresa", conversationId: conversation.id, connectionId: connection.id, channel: "whatsapp", recipientId: phone, text });
+        } catch (error) { console.error("[whatsapp-ai] No se pudo responder automáticamente", error); }
       }
     }
 
@@ -72,6 +83,7 @@ export async function POST(request: Request) {
       let socialConnection = await findMetaConnection("instagram", accountId);
       if (!socialConnection) socialConnection = await findMetaConnection("facebook", accountId);
       if (!socialConnection) continue;
+      if (!(await tenantAcceptsChannels(supabase, socialConnection.tenant_id))) continue;
       const provider = socialConnection.provider as "facebook" | "instagram";
       const senderId = String(event.sender.id);
       const text = String(event.message?.text || event.postback?.title || event.postback?.payload || "[Mensaje multimedia]");
@@ -87,6 +99,10 @@ export async function POST(request: Request) {
       if (duplicate) continue;
       await supabase.from("messages").insert({ tenant_id: socialConnection.tenant_id, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: externalId, metadata: { provider, raw: event } });
       await runAutomations({ tenantId: socialConnection.tenant_id, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profileName, channel: provider, text } });
+      try {
+        const { data: tenant } = await supabase.from("tenants").select("name").eq("id", socialConnection.tenant_id).single();
+        await respondToMetaConversation({ tenantId: socialConnection.tenant_id, tenantName: tenant?.name || "la empresa", conversationId: conversation.id, connectionId: socialConnection.id, channel: provider, recipientId: senderId, text });
+      } catch (error) { console.error(`[${provider}-ai] No se pudo responder automáticamente`, error); }
     }
   }
   await supabase.from("webhook_events").update({ processed_at: new Date().toISOString() }).eq("provider", "meta").eq("external_id", eventId);
