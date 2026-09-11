@@ -82,7 +82,7 @@ export function MetaConnections() {
         await new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "/resources/boot"; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; script.onload = () => resolve(); script.onerror = () => reject(new Error("No se pudo cargar el acceso de Meta")); document.body.appendChild(script); });
       }
       if (!window.FB) throw new Error("Meta no inicializó el acceso. Desactiva el bloqueo de ventanas y vuelve a intentarlo.");
-      window.FB.init({ appId, cookie: true, xfbml: false, version: config.graphVersion }); setEmbeddedReady(true);
+      window.FB.init({ appId, cookie: true, xfbml: false, fedCM: false, version: config.graphVersion }); setEmbeddedReady(true);
       let callbackFinished = false;
       const timeout = window.setTimeout(() => { if (!callbackFinished) { setConnectingWhatsapp(false); setMessageType("error"); setMessage("Meta no devolvió la autorización. Cierra ventanas antiguas de Facebook y vuelve a intentarlo."); } }, 45000);
       window.FB.login(async response => {
