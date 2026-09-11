@@ -94,7 +94,7 @@ export function MetaConnections(){
           setMessageType("success");setMessage("WhatsApp quedó conectado, verificado y suscrito al webhook.");await load();
         }catch(error){setMessageType("error");setMessage(error instanceof Error?error.message:"No se pudo conectar WhatsApp.");}
         finally{callbackFinished=true;window.clearTimeout(timeout);setConnectingWhatsapp(false);}
-      },{config_id:config.configId,response_type:"code",override_default_response_type:true,redirect_uri:`${window.location.origin}/dashboard`,extras:{setup:{}}});
+      },{config_id:config.configId,response_type:"code",override_default_response_type:true,redirect_uri:`${window.location.origin}/dashboard`,extras:{feature:"whatsapp_embedded_signup",sessionInfoVersion:"3"}});
     }catch(error){setMessageType("error");setMessage(error instanceof Error?error.message:"No se pudo conectar WhatsApp.");setConnectingWhatsapp(false);}
   }
 
