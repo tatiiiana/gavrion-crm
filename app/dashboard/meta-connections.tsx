@@ -38,7 +38,7 @@ export function MetaConnections() {
     }
   }
 
-  useEffect(() => { fetch("/api/meta/embedded-signup/config", { cache: "no-store" }).then(response => response.json()).then(config => { embeddedConfig.current = { appId: String(config.appId || "").trim(), configId: String(config.configId || "").trim(), graphVersion: String(config.graphVersion || "v26.0") }; if (!document.querySelector("script[data-meta-sdk]")) { const script = document.createElement("script"); script.src = "/api/meta/loader";; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; document.body.appendChild(script); } }).catch(() => {}); }, []);
+  useEffect(() => { fetch("/api/meta/embedded-signup/config", { cache: "no-store" }).then(response => response.json()).then(config => { embeddedConfig.current = { appId: String(config.appId || "").trim(), configId: String(config.configId || "").trim(), graphVersion: String(config.graphVersion || "v26.0") }; if (!document.querySelector("script[data-meta-sdk]")) { const script = document.createElement("script"); script.src = "/api/integration-loader"; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; document.body.appendChild(script); } }).catch(() => {}); }, []);
   useEffect(() => {
     function sessionInfo(event: MessageEvent) {
       if (!["https://www.facebook.com", "https://web.facebook.com"].includes(event.origin)) return;
@@ -79,7 +79,7 @@ export function MetaConnections() {
       const configId = config.configId;
       if (!/^\d+$/.test(appId) || !/^\d+$/.test(configId)) throw new Error("La configuración de WhatsApp Embedded Signup no está completa en Vercel. Verifica META_APP_ID y META_WHATSAPP_CONFIG_ID.");
       if (!document.querySelector("script[data-meta-sdk]")) {
-        await new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "/api/meta/loader";; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; script.onload = () => resolve(); script.onerror = () => reject(new Error("No se pudo cargar el acceso de Meta")); document.body.appendChild(script); });
+        await new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "/api/integration-loader"; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; script.onload = () => resolve(); script.onerror = () => reject(new Error("No se pudo cargar el acceso de Meta")); document.body.appendChild(script); });
       }
       if (!window.FB) throw new Error("Meta no inicializó el acceso. Desactiva el bloqueo de ventanas y vuelve a intentarlo.");
       window.FB.init({ appId, cookie: true, xfbml: false, version: config.graphVersion }); setEmbeddedReady(true);
@@ -133,4 +133,3 @@ export function MetaConnections() {
     <div className="meta-webhook"><span>Webhook</span><code>{typeof window === "undefined" ? "" : window.location.origin + "/api/webhooks/meta"}</code><small>Verificado en Meta · suscribe los eventos de mensajes antes de publicar.</small></div>
   </article>;
 }
-
