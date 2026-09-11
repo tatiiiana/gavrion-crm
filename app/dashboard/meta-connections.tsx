@@ -70,7 +70,7 @@ export function MetaConnections() {
   }
 
   async function connectWhatsapp() {
-    setConnectingWhatsapp(true); setMessage(""); embeddedSession.current = null;
+    setConnectingWhatsapp(true); setMessage(""); const signupWindow = window.open("about:blank", "gavrion-whatsapp-signup", "width=720,height=760"); if (!signupWindow) throw new Error("El navegador bloqueó la ventana de Meta. Permite ventanas emergentes para gavrion-crm.vercel.app."); embeddedSession.current = null;
     try {
       const configResponse = await fetch("/api/meta/embedded-signup/config", { cache: "no-store" });
       const config = await readJson(configResponse);
