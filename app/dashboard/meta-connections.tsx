@@ -83,6 +83,8 @@ export function MetaConnections(){
       }
       if(!window.FB)throw new Error("Meta no inicializó el acceso. Desactiva el bloqueo de ventanas y vuelve a intentarlo.");
       window.FB.init({appId:config.appId,cookie:true,xfbml:false,version:config.graphVersion});setEmbeddedReady(true);
+      let callbackFinished=false;
+      const timeout=window.setTimeout(()=>{if(!callbackFinished){setConnectingWhatsapp(false);setMessageType("error");setMessage("Meta no abrió la ventana de autorización. Permite las ventanas emergentes para gavrion-crm.vercel.app y vuelve a intentarlo.");}},45000);
       window.FB.login(async response=>{
         try{
           const code=response.authResponse?.code;if(!code)throw new Error("La autorización fue cancelada o Meta no devolvió el código.");
@@ -91,7 +93,7 @@ export function MetaConnections(){
           const result=await readJson(completed);if(!completed.ok)throw new Error(result.error||"No se pudo guardar la conexión.");
           setMessageType("success");setMessage("WhatsApp quedó conectado, verificado y suscrito al webhook.");await load();
         }catch(error){setMessageType("error");setMessage(error instanceof Error?error.message:"No se pudo conectar WhatsApp.");}
-        finally{setConnectingWhatsapp(false);}
+        finally{callbackFinished=true;window.clearTimeout(timeout);setConnectingWhatsapp(false);}
       },{config_id:config.configId,response_type:"code",override_default_response_type:true,extras:{setup:{}}});
     }catch(error){setMessageType("error");setMessage(error instanceof Error?error.message:"No se pudo conectar WhatsApp.");setConnectingWhatsapp(false);}
   }
