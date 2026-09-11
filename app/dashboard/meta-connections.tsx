@@ -77,7 +77,7 @@ export function MetaConnections() {
       if (!configResponse.ok) throw new Error(config.error || "No se pudo preparar Meta.");
       const appId = String(config.appId || "").trim();
       const configId = String(config.configId || "").trim();
-      if (!/^\\d+$/.test(appId) || !/^\\d+$/.test(configId)) throw new Error("La configuración de WhatsApp Embedded Signup no está completa en Vercel. Verifica META_APP_ID y META_WHATSAPP_CONFIG_ID.");
+      if (!/^\d+$/.test(appId) || !/^\d+$/.test(configId)) throw new Error("La configuración de WhatsApp Embedded Signup no está completa en Vercel. Verifica META_APP_ID y META_WHATSAPP_CONFIG_ID.");
       if (!document.querySelector("script[data-meta-sdk]")) {
         await new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "https://connect.facebook.net/es_LA/sdk.js"; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; script.onload = () => resolve(); script.onerror = () => reject(new Error("No se pudo cargar el acceso de Meta")); document.body.appendChild(script); });
       }
@@ -133,3 +133,4 @@ export function MetaConnections() {
     <div className="meta-webhook"><span>Webhook</span><code>{typeof window === "undefined" ? "" : window.location.origin + "/api/webhooks/meta"}</code><small>Verificado en Meta · suscribe los eventos de mensajes antes de publicar.</small></div>
   </article>;
 }
+
