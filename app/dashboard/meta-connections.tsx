@@ -19,7 +19,7 @@ export function MetaConnections() {
   const [showWhatsapp, setShowWhatsapp] = useState(false);
   const [embeddedReady, setEmbeddedReady] = useState(false);
   const [connectingWhatsapp, setConnectingWhatsapp] = useState(false);
-  const embeddedSession = useRef<EmbeddedSession | null>(null);
+  const embeddedSession = useRef<EmbeddedSession | null>(null); const embeddedConfig = useRef<{ appId: string; configId: string; graphVersion: string } | null>(null);
   const [form, setForm] = useState({ displayName: "", phoneNumberId: "", businessAccountId: "", accessToken: "" });
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("error");
@@ -38,7 +38,7 @@ export function MetaConnections() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { fetch("/api/meta/embedded-signup/config", { cache: "no-store" }).then(response => response.json()).then(config => { embeddedConfig.current = { appId: String(config.appId || "").trim(), configId: String(config.configId || "").trim(), graphVersion: String(config.graphVersion || "v26.0") }; if (!document.querySelector("script[data-meta-sdk]")) { const script = document.createElement("script"); script.src = "https://connect.facebook.net/es_LA/sdk.js"; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; document.body.appendChild(script); } }).catch(() => {}); }, []);
   useEffect(() => {
     function sessionInfo(event: MessageEvent) {
       if (!["https://www.facebook.com", "https://web.facebook.com"].includes(event.origin)) return;
@@ -70,13 +70,13 @@ export function MetaConnections() {
   }
 
   async function connectWhatsapp() {
-    setConnectingWhatsapp(true); setMessage(""); const signupWindow = window.open("about:blank", "gavrion-whatsapp-signup", "width=720,height=760"); if (!signupWindow) throw new Error("El navegador bloqueó la ventana de Meta. Permite ventanas emergentes para gavrion-crm.vercel.app."); embeddedSession.current = null;
+    setConnectingWhatsapp(true); setMessage(""); embeddedSession.current = null;
     try {
-      const configResponse = await fetch("/api/meta/embedded-signup/config", { cache: "no-store" });
-      const config = await readJson(configResponse);
-      if (!configResponse.ok) throw new Error(config.error || "No se pudo preparar Meta.");
-      const appId = String(config.appId || "").trim();
-      const configId = String(config.configId || "").trim();
+      const config = embeddedConfig.current; if (!config) throw new Error("Meta todavía está cargando. Recarga la página e inténtalo de nuevo.");
+      
+      
+      const appId = config.appId;
+      const configId = config.configId;
       if (!/^\d+$/.test(appId) || !/^\d+$/.test(configId)) throw new Error("La configuración de WhatsApp Embedded Signup no está completa en Vercel. Verifica META_APP_ID y META_WHATSAPP_CONFIG_ID.");
       if (!document.querySelector("script[data-meta-sdk]")) {
         await new Promise<void>((resolve, reject) => { const script = document.createElement("script"); script.src = "https://connect.facebook.net/es_LA/sdk.js"; script.async = true; script.defer = true; script.dataset.metaSdk = "true"; script.onload = () => resolve(); script.onerror = () => reject(new Error("No se pudo cargar el acceso de Meta")); document.body.appendChild(script); });
