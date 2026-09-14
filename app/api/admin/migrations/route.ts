@@ -5,6 +5,8 @@ export async function GET() {
   const access = await requirePlatformPermission("templates.read");
   if (!access) return NextResponse.json({ error:"Acceso exclusivo para personal autorizado." }, { status:403 });
   const checks = [
+    ["007_reservations_orders", "reservations", "id,tenant_id,status"],
+    ["017_lifecycle_operational_modules", "appointments", "id,tenant_id,status"],
     ["015_superadmin_implementations", "platform_admins", "user_id"],
     ["016_template_cloner", "implementation_templates", "id,current_version"],
     ["021_platform_roles_site_catalog", "platform_staff", "user_id,role"],
