@@ -131,7 +131,7 @@ export async function PATCH(request: Request) {
     const incoming = body.action === "restore_version" ? (await access.admin.from("implementation_template_versions").select("name,description,business_type,configuration").eq("id", String(body.versionId || "")).eq("template_id", id).maybeSingle()).data : body;
     if (!incoming) return NextResponse.json({ error:"Versión no encontrada." }, { status:404 });
     const configuration = normalizeConfiguration(incoming.configuration || current.configuration);
-    const next = { name: String(incoming.name || current.name).trim().slice(0,120), description: String(incoming.description ?? current.description).trim().slice(0,280), business_type: ["generic","real_estate","restaurant","services","commerce"].includes(incoming.business_type) ? incoming.business_type : current.business_type, configuration };
+    const next = { name: String(incoming.name || current.name).trim().slice(0,120), description: String(incoming.description ?? current.description).trim().slice(0,280), business_type: ["generic","real_estate","restaurant","services","commerce","hospitality"].includes(incoming.business_type) ? incoming.business_type : current.business_type, configuration };
     if (next.name.length < 3) return NextResponse.json({ error:"El nombre debe tener al menos 3 caracteres." }, { status:400 });
     const update = await access.admin.from("implementation_templates").update(next).eq("id", id).select().single();
     if (update.error || !update.data) return NextResponse.json({ error:update.error?.message || "No se pudo guardar la plantilla." }, { status:400 });
