@@ -54,6 +54,7 @@ export default function Dashboard() {
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [view, setView] = useState(() => typeof window === "undefined" ? "inicio" : new URLSearchParams(window.location.search).get("view") || "inicio");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("empresa");
+  const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("30d");
   const [dashboardMetrics, setDashboardMetrics] = useState({ contacts: 0, conversations: 0, deals: 0, won: 0, pipeline: 0 });
   const [activity, setActivity] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
@@ -205,6 +206,10 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (view === "configuracion") setSettingsMenuOpen(true);
+  }, [view]);
+
+  useEffect(() => {
     function updateGreeting() {
       const hour = new Date().getHours();
       setGreeting(hour >= 5 && hour < 12 ? "Buenos días" : hour >= 12 && hour < 19 ? "Buenas tardes" : "Buenas noches");
@@ -335,7 +340,7 @@ export default function Dashboard() {
     else { setTasks(current => current.filter(task => task.id !== id)); showNotice("success", "Tarea eliminada."); }
   }
 
-  function navigate(next: string) { setView(next); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  function navigate(next: string) { setView(next); if (next !== "configuracion") setSettingsMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }
   async function saveContact(event: FormEvent) {
     event.preventDefault(); if (!contactName.trim() || !tenantId) return;
     const supabase = createClientSupabase();
@@ -631,7 +636,7 @@ export default function Dashboard() {
     <aside className="sidebar">
       <div className="brand gavrion-brand tenant-brand">{tenantLogoUrl && !logoFailed ? <img className="tenant-logo" src={tenantLogoUrl} alt={`Logo de ${account.company || "la empresa"}`} onError={()=>setLogoFailed(true)} /> : <span className="brand-mark">{(account.company || "E").charAt(0).toUpperCase()}</span>}<span>{account.company || "Mi empresa"}</span></div>
       <nav className="nav">{[["inicio","⌂","Inicio","dashboard"],["conversaciones","◫","Conversaciones","conversations"],["inmobiliaria","▤","Inmobiliaria","properties"],["reservaciones","▣","Reservaciones","reservations"],["pedidos","▤","Pedidos","orders"],["citas","◷","Citas","appointments"],["cotizaciones","◇","Cotizaciones","quotes"],["productos","▦","Productos","products"],["contactos","♙","Contactos","contacts"],["pipeline_v2","▦","Pipeline","pipeline"],["campos","＋","Campos personalizados","pipeline"],["equipo","♧","Equipo","team"],["automatizaciones","⌁","Automatizaciones","automations"],["reportes","⌗","Reportes","reports"],["auditoria","◉","Auditoría","audit"]].filter(([id,,,module])=>roleAllowsModule(id)&& (enabledModules===null||enabledModules.includes(module))).map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&totalUnread>0&&<i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
-      <div className="sidebar-bottom">{isClientAdmin&&<button onClick={()=>navigate("configuracion")} className={`nav-item ${view==="configuracion"?"active":""}`}><span>⚙</span>Configuración</button>}<div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
+      <div className="sidebar-bottom">{isClientAdmin&&<><button type="button" aria-expanded={settingsMenuOpen} onClick={()=>{if(view!=="configuracion"){setSettingsMenuOpen(true);navigate("configuracion")}else setSettingsMenuOpen(value=>!value)}} className={`nav-item settings-parent ${view==="configuracion"?"active":""}`}><span>⚙</span><span>Configuración</span><b className={`settings-chevron ${settingsMenuOpen?"open":""}`}>⌄</b></button>{settingsMenuOpen&&<nav className="settings-sidebar-menu" aria-label="Submenú de configuración"><button type="button" className={view==="configuracion"&&settingsTab==="empresa"?"active":""} onClick={()=>{setSettingsTab("empresa");navigate("configuracion")}}><span>⌂</span>Empresa y widget</button><button type="button" className={view==="configuracion"&&settingsTab==="canales"?"active":""} onClick={()=>{setSettingsTab("canales");navigate("configuracion")}}><span>◉</span>Canales y conexiones</button><button type="button" className={view==="configuracion"&&settingsTab==="asistente"?"active":""} onClick={()=>{setSettingsTab("asistente");navigate("configuracion")}}><span>✦</span>Asistente IA</button><button type="button" className={view==="configuracion"&&settingsTab==="chatbox"?"active":""} onClick={()=>{setSettingsTab("chatbox");navigate("configuracion")}}><span>▣</span>Instalación web</button></nav>}</>}<div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
     </aside>
     <main className="main">
       {supportMode&&<div className="support-mode-banner"><strong>Modo soporte:</strong> estás operando dentro de {account.company}. Todas las acciones quedan registradas.<a href="/admin">Volver al panel</a></div>}
@@ -692,12 +697,6 @@ export default function Dashboard() {
 
       {view === "configuracion" && isClientAdmin && <section className="view active">
         <div className="section-heading"><div><h2>Configuración</h2><p>Administra la identidad y los servicios de esta empresa.</p></div></div>
-        <nav className="settings-subnav" aria-label="Secciones de configuración" role="tablist">
-          <button type="button" role="tab" aria-selected={settingsTab==="empresa"} className={settingsTab==="empresa"?"active":""} onClick={()=>setSettingsTab("empresa")}><span className="settings-tab-icon">⌂</span><span><strong>Empresa y widget</strong><small>Identidad, horario y chatbox</small></span></button>
-          <button type="button" role="tab" aria-selected={settingsTab==="canales"} className={settingsTab==="canales"?"active":""} onClick={()=>setSettingsTab("canales")}><span className="settings-tab-icon">◉</span><span><strong>Canales</strong><small>WhatsApp, Facebook e Instagram</small></span></button>
-          <button type="button" role="tab" aria-selected={settingsTab==="asistente"} className={settingsTab==="asistente"?"active":""} onClick={()=>setSettingsTab("asistente")}><span className="settings-tab-icon">✦</span><span><strong>Asistente IA</strong><small>Conocimiento y automatización</small></span></button>
-          <button type="button" role="tab" aria-selected={settingsTab==="chatbox"} className={settingsTab==="chatbox"?"active":""} onClick={()=>setSettingsTab("chatbox")}><span className="settings-tab-icon">▣</span><span><strong>Instalación web</strong><small>Código del chatbox</small></span></button>
-        </nav>
         <div className="settings-tab-caption"><span>{settingsTab==="empresa"?"Identidad y experiencia del cliente":settingsTab==="canales"?"Conecta y administra tus canales de mensajería":settingsTab==="asistente"?"Define cómo responde tu asistente automático":"Lleva el chatbox a la web de tu empresa"}</span><span className="settings-tab-step">{settingsTab==="empresa"?"1":settingsTab==="canales"?"2":settingsTab==="asistente"?"3":"4"} de 4</span></div>
         {settingsTab==="empresa"&&<CompanySettings />}
         {settingsTab==="canales"&&<MetaConnections />}
