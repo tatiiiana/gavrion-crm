@@ -44,3 +44,7 @@
 .chat-header{flex:0 0 68px}
 .messages{flex:1 1 0;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .composer{flex:0 0 64px;background:#fff}
+.meta-progress{padding:12px 14px;border:1px solid #dcdaf5;border-radius:10px;background:#f3f2ff;color:#4b49ac;font-size:11px;font-weight:700}
+
+/* Submenu de configuración dentro de la barra lateral. */
+.settings-parent{width:100%;position:relative}.settings-parent>span:nth-child(2){flex:1}.settings-chevron{font-size:16px;line-height:1;color:#9da5a0;transform:rotate(0deg);transition:.18s ease}.settings-chevron.open{transform:rotate(180deg);color:inherit}.settings-sidebar-menu{display:grid;gap:3px;margin:4px 0 9px;padding:5px 8px 6px 29px;border-left:1px solid rgba(125,120,210,.35)}.settings-sidebar-menu button{display:flex;align-items:center;gap:9px;width:100%;min-height:34px;padding:7px 9px;border:0;border-radius:8px;background:transparent;color:#929a95;text-align:left;font-size:12px;white-space:nowrap}.settings-sidebar-menu button:hover{background:rgba(255,255,255,.08);color:#fff}.settings-sidebar-menu button.active{background:#eeedff;color:#4b49ac;font-weight:700}.settings-sidebar-menu button span{width:16px;text-align:center;color:#a7a5dc;font-size:12px}.settings-sidebar-menu button.active span{color:#4b49ac}
