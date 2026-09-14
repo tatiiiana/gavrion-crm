@@ -137,6 +137,16 @@ export default function Dashboard() {
             setNotice({ type: "error", text: "No fue posible abrir esta empresa en modo soporte." });
           }
         }
+        if (!supportTenant) {
+          // El personal Gavrion trabaja en el panel de plataforma, incluso si
+          // Supabase creó una membresía temporal durante la invitación.
+          const platformResponse = await fetch("/api/admin/access", { cache: "no-store" }).catch(() => null);
+          const platformAccess = platformResponse?.ok ? await platformResponse.json().catch(() => null) : null;
+          if (platformAccess?.isPlatformStaff) {
+            window.location.replace("/admin");
+            return;
+          }
+        }
         setCurrentRole(membership?.role || "");
         let company = String(user.user_metadata?.company_name || "");
         if (membership?.tenant_id) {
@@ -192,8 +202,8 @@ export default function Dashboard() {
               return { id: conversation.id, name: contact?.name || conversation.external_thread_id || "Contacto", channel: channelLabels[conversation.channel] || conversation.channel, preview: conversationMessages.at(-1)?.text || "Sin mensajes", contactId: conversation.contact_id || "", externalThreadId: conversation.external_thread_id || "", handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"], assignedTo: conversation.assigned_to || "", unread: 0, messages: conversationMessages };
             }));
           }
-        } else {
-          setNotice({ type: "error", text: "Tu usuario no tiene una membresía activa en una empresa lista para operar. Revisa memberships.active y tenants.implementation_status (ready/production) en Supabase." });
+        } else if (!supportTenant) {
+          setNotice({ type: "error", text: "Tu usuario no tiene una membresía activa en una empresa lista para operar. Si eres personal Gavrion, entra al panel de Administración; si eres cliente, revisa tu membresía en Supabase." });
         }
         const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase();
         const roleLabels: Record<string, string> = { owner: "Administrador del cliente", admin: "Administrador del cliente", agent: "Agente del cliente", viewer: "Consulta" };
