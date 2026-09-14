@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requirePlatformPermission } from "@/lib/platform-access";
+import { applyTemplateConfiguration, recordPlatformAudit, type TemplateConfiguration } from "@/lib/template-management";
 
 const templates: Record<string, string[]> = {
   generic: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget"],
@@ -7,15 +8,6 @@ const templates: Record<string, string[]> = {
   restaurant: ["dashboard", "conversations", "contacts", "tasks", "team", "automations", "reports", "assistant", "widget", "reservations", "orders"],
   services: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget", "appointments", "quotes"],
   commerce: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget", "products", "orders"]
-};
-
-type TemplateConfiguration = {
-  modules?: string[];
-  tenant_settings?: Record<string, unknown>;
-  assistant?: { enabled?: boolean; instructions?: string; handoff_message?: string };
-  knowledge?: { title:string; content:string; active:boolean }[];
-  automations?: { name:string; trigger_event:string; conditions:unknown[]; actions:unknown[]; enabled:boolean }[];
-  company_profile?: { timezone?:string; business_hours?:Record<string, unknown> };
 };
 
 function cleanSlug(value: string) {
@@ -94,13 +86,10 @@ export async function POST(request: Request) {
   }
   const { error: membershipError } = await admin.from("memberships").upsert({ tenant_id: tenant.id, user_id: owner.id, role: "owner" }, { onConflict: "tenant_id,user_id" });
   if (membershipError) return NextResponse.json({ error: membershipError.message }, { status: 400 });
-  const assistantSettings = configuration.assistant || {};
-  await Promise.all([
-    admin.from("assistant_settings").upsert({ tenant_id:tenant.id, assistant_name:`Asistente de ${name}`, enabled:assistantSettings.enabled ?? true, instructions:assistantSettings.instructions || "Responde con amabilidad, brevedad y únicamente con información confirmada.", handoff_message:assistantSettings.handoff_message || "Voy a transferir esta conversación a una persona del equipo para ayudarte mejor." }, { onConflict:"tenant_id" }),
-    admin.from("company_profiles").upsert({ tenant_id:tenant.id, timezone:configuration.company_profile?.timezone || "America/Tegucigalpa", business_hours:configuration.company_profile?.business_hours || {} }, { onConflict:"tenant_id" })
-  ]);
-  if (configuration.knowledge?.length) await admin.from("knowledge_documents").insert(configuration.knowledge.map(item => ({ tenant_id:tenant.id, title:item.title, content:item.content, active:item.active })));
-  if (configuration.automations?.length) await admin.from("automation_flows").insert(configuration.automations.map(item => ({ tenant_id:tenant.id, name:item.name, trigger_event:item.trigger_event, conditions:item.conditions || [], actions:item.actions || [], enabled:item.enabled, created_by:user.id })));
+  try { await applyTemplateConfiguration(admin, { ...configuration, modules } as TemplateConfiguration, tenant.id, user.id, false); }
+  catch (error) { return NextResponse.json({ error:error instanceof Error ? error.message : "No se pudo aplicar la configuración de la plantilla." }, { status:400 }); }
+  const audit = await recordPlatformAudit(admin, { actorUserId:user.id, targetTenantId:tenant.id, action:"create", entityType:"implementation", entityId:tenant.id, changes:{ templateId:selectedTemplate.id, modules } });
+  if (audit) return NextResponse.json({ error:audit.message }, { status:500 });
   return NextResponse.json({ ...tenant, owner: { id: owner.id, email: ownerEmail, name: ownerName } }, { status: 201 });
 }
 
@@ -120,5 +109,7 @@ export async function PATCH(request: Request) {
   if (status === "suspended") lifecycle.suspended_at = now;
   if (status === "archived") lifecycle.archived_at = now;
   const { data, error } = await access.admin.from("tenants").update(lifecycle).eq("id", tenantId).select("id,implementation_status,status_reason,production_at,suspended_at,archived_at").single();
-  return error ? NextResponse.json({ error: error.message }, { status: 400 }) : NextResponse.json(data);
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  const audit = await recordPlatformAudit(access.admin, { actorUserId:access.user.id, targetTenantId:tenantId, action:"update", entityType:"implementation", entityId:tenantId, changes:{ status, reason:reason || null } });
+  return audit ? NextResponse.json({ error:audit.message }, { status:500 }) : NextResponse.json(data);
 }

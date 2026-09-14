@@ -16,8 +16,10 @@ export async function GET(request: Request) {
   const key = new URL(request.url).searchParams.get("key");
   if (!key) return NextResponse.json({ error: "Falta la clave del widget" }, { status: 400, headers: cors(origin) });
   const supabase = createAdminSupabase();
-  const { data: tenant } = await supabase.from("tenants").select("id, name, logo_url, settings").eq("widget_key", key).maybeSingle();
-  if (!tenant) return NextResponse.json({ error: "Widget no disponible" }, { status: 404, headers: cors(origin) });
+  const { data: tenant } = await supabase.from("tenants").select("id, name, logo_url, settings, implementation_status").eq("widget_key", key).maybeSingle();
+  if (!tenant || !["testing", "ready", "production"].includes(tenant.implementation_status || "draft")) {
+    return NextResponse.json({ error: "Widget no disponible" }, { status: 404, headers: cors(origin) });
+  }
   const { data: profile } = await supabase.from("company_profiles").select("timezone, business_hours").eq("tenant_id", tenant.id).maybeSingle();
   const settings = tenant.settings || {};
   const timezone = profile?.timezone || "America/Tegucigalpa";

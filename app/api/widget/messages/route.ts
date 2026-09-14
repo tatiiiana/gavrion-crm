@@ -21,8 +21,8 @@ export async function GET(request: Request) {
   const conversationId = url.searchParams.get("conversationId");
   if (!key || !visitorId || !conversationId) return NextResponse.json({ error: "Solicitud incompleta" }, { status: 400, headers: cors(origin) });
   const supabase = createAdminSupabase();
-  const { data: tenant } = await supabase.from("tenants").select("id, name").eq("widget_key", key).maybeSingle();
-  if (!tenant) return NextResponse.json({ error: "Widget no disponible" }, { status: 404, headers: cors(origin) });
+  const { data: tenant } = await supabase.from("tenants").select("id, name, implementation_status").eq("widget_key", key).maybeSingle();
+  if (!tenant || !["testing", "ready", "production"].includes(tenant.implementation_status || "draft")) return NextResponse.json({ error: "Widget no disponible" }, { status: 404, headers: cors(origin) });
   const { data: conversation } = await supabase.from("conversations").select("id").eq("id", conversationId).eq("tenant_id", tenant.id).eq("channel", "web").eq("external_thread_id", visitorId).maybeSingle();
   if (!conversation) return NextResponse.json({ error: "Conversación no encontrada" }, { status: 404, headers: cors(origin) });
   const { data, error } = await supabase.from("messages").select("id, direction, body, created_at").eq("conversation_id", conversation.id).order("created_at", { ascending: true }).limit(100);
@@ -42,8 +42,8 @@ export async function POST(request: Request) {
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return NextResponse.json({ error: "Correo inválido" }, { status: 400, headers: cors(origin) });
 
   const supabase = createAdminSupabase();
-  const { data: tenant } = await supabase.from("tenants").select("id, name").eq("widget_key", key).maybeSingle();
-  if (!tenant) return NextResponse.json({ error: "Widget no disponible" }, { status: 404, headers: cors(origin) });
+  const { data: tenant } = await supabase.from("tenants").select("id, name, implementation_status").eq("widget_key", key).maybeSingle();
+  if (!tenant || !["testing", "ready", "production"].includes(tenant.implementation_status || "draft")) return NextResponse.json({ error: "Widget no disponible" }, { status: 404, headers: cors(origin) });
 
   let { data: contact } = await supabase.from("contacts").select("id").eq("tenant_id", tenant.id).eq("source", "web").contains("metadata", { web_visitor_id: visitorId }).maybeSingle();
   if (!contact) {
