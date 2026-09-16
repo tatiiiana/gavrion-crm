@@ -33,6 +33,7 @@ export async function PATCH(request:Request){
   const body=await request.json();const id=String(body.id||"");const status=String(body.status||"draft");
   if(!id||!["draft","review","ready","exported"].includes(status))return NextResponse.json({error:"Datos inválidos."},{status:400});
   const lookupAdmin=(await requirePlatformPermission("sites.read"))?.admin;if(!lookupAdmin)return NextResponse.json({error:"Acceso denegado."},{status:403});const project=await lookupAdmin.from("site_projects").select("tenant_id").eq("id",id).maybeSingle();if(!project.data)return NextResponse.json({error:"Proyecto inexistente."},{status:404});const access=await requirePlatformPermission("sites.write",project.data.tenant_id);if(!access)return NextResponse.json({error:"No tienes permiso para editar este proyecto."},{status:403});
+  if(status==="ready"&&!(["superadmin","implementer"] as string[]).includes(access.role))return NextResponse.json({error:"El vendedor debe enviar el sitio a revisión; la aprobación corresponde al Superadmin o Implementador."},{status:403});
   const configuration=sanitizeSiteConfig(body.configuration);
   const current=await access.admin.from("site_project_versions").select("version").eq("site_project_id",id).order("version",{ascending:false}).limit(1).maybeSingle();
   const version=(current.data?.version||0)+1;
