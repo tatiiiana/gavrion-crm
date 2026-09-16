@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requirePlatformPermission } from "@/lib/platform-access";
 import { applyTemplateConfiguration, normalizeConfiguration, recordPlatformAudit } from "@/lib/template-management";
 
-async function accessFor(capability: "companies.create" | "templates.write", tenantId?: string) {
+async function accessFor(capability: "customizations.write" | "templates.write", tenantId?: string) {
   return await requirePlatformPermission(capability, tenantId);
 }
 
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   const tenantId = String(body.tenantId || "");
   const templateId = String(body.templateId || "");
   if (!tenantId || !templateId) return NextResponse.json({ error:"Selecciona una empresa y una plantilla." }, { status:400 });
-  const access = await accessFor("companies.create", tenantId) || await accessFor("templates.write", tenantId);
+  const access = await accessFor("customizations.write", tenantId) || await accessFor("templates.write", tenantId);
   if (!access) return NextResponse.json({ error:"No tienes permisos para personalizar esta empresa." }, { status:403 });
   const [{ data: template, error: templateError }, { data: tenant, error: tenantError }] = await Promise.all([
     access.admin.from("implementation_templates").select("id,name,current_version,configuration,active").eq("id", templateId).eq("active", true).maybeSingle(),
@@ -59,7 +59,7 @@ export async function PATCH(request: Request) {
   if (readAccess.tenantIds && !readAccess.tenantIds.includes(tenantId)) return NextResponse.json({ error:"No tienes esta empresa asignada." }, { status:403 });
   const editable = action === "update" || action === "submit";
   if (editable) {
-    const access = await accessFor("companies.create", tenantId) || await accessFor("templates.write", tenantId);
+    const access = await accessFor("customizations.write", tenantId) || await accessFor("templates.write", tenantId);
     if (!access) return NextResponse.json({ error:"No tienes permisos para editar esta personalización." }, { status:403 });
     if (["applied","approved"].includes(customization.status) && action === "update") return NextResponse.json({ error:"Esta personalización ya fue aprobada. Crea una nueva revisión para modificarla." }, { status:409 });
     const overrides = body.overrides ? normalizeConfiguration(body.overrides) : normalizeConfiguration(customization.overrides);
