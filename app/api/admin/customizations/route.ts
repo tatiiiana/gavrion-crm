@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   if (templateError || !template) return NextResponse.json({ error:templateError?.message || "Plantilla no encontrada." }, { status:404 });
   if (tenantError || !tenant) return NextResponse.json({ error:tenantError?.message || "Empresa no encontrada." }, { status:404 });
   const existing = await access.admin.from("implementation_customizations").select("id").eq("tenant_id", tenantId).maybeSingle();
-  if (existing.data?.id) return NextResponse.json({ error:"Esta empresa ya tiene una personalización. Ábrela desde Personalizaciones." }, { status:409 });
+  if (existing.data?.id) return NextResponse.json({ error:"Esta empresa ya tiene una personalización CRM. Ábrela desde Personalizaciones CRM." }, { status:409 });
   const overrides = normalizeConfiguration(template.configuration);
   const { data, error } = await access.admin.from("implementation_customizations").insert({ tenant_id:tenantId, template_id:templateId, template_version:template.current_version || 1, status:"draft", overrides, created_by:access.user.id }).select().single();
   if (error || !data) return NextResponse.json({ error:error?.message || "No se pudo crear el borrador." }, { status:400 });
