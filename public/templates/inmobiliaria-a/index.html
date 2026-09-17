@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inmobiliaria</title>
+    <meta name="description" content="Propiedades seleccionadas y acompañamiento inmobiliario." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <section class="hero" id="inicio">
+        <nav><a class="brand" href="#inicio"><span class="brand-mark">M</span><strong>Inmobiliaria</strong></a><div class="nav-links"><a href="#propiedades">Propiedades</a><a href="#nosotros">Nosotros</a><a href="#contacto">Contacto</a><button class="nav-contact" data-contact>Hablar con un asesor</button></div></nav>
+        <div class="hero-content"><p class="eyebrow" id="heroEyebrow">PROPIEDADES SELECCIONADAS</p><h1 id="heroTitle">Encuentra un lugar que se sienta tuyo.</h1><p class="hero-copy" id="heroDescription">Compra, alquila o agenda una visita con acompañamiento profesional.</p><div class="hero-actions"><a class="button button-light" href="#propiedades">Ver propiedades</a><button class="button button-outline" data-contact>Contactar un asesor</button></div></div>
+        <div class="hero-search"><label>¿Qué estás buscando?<select id="operationFilter"><option value="all">Comprar o alquilar</option><option value="venta">Comprar</option><option value="alquiler">Alquilar</option></select></label><label>Ubicación<input id="locationFilter" placeholder="Ciudad o zona" /></label><button id="searchButton">Buscar propiedades</button></div>
+      </section>
+      <section class="intro section-pad" id="nosotros"><p class="eyebrow warm" id="experienceEyebrow">ACOMPAÑAMIENTO DE PRINCIPIO A FIN</p><div class="intro-grid"><h2 id="experienceTitle">Decisiones importantes, con la información correcta.</h2><p id="experienceDescription">La web, el chatbox y el CRM trabajan juntos para que cada consulta tenga seguimiento y cada visita avance con claridad.</p></div><div class="journey"><span>Consulta</span><i></i><span>Asesoría</span><i></i><span>Visita</span><i></i><strong>Seguimiento</strong></div></section>
+      <section class="properties section-pad" id="propiedades"><div class="section-heading"><div><p class="eyebrow warm">CATÁLOGO DISPONIBLE</p><h2>Propiedades destacadas</h2></div><span class="results" id="resultsCount"></span></div><div class="property-grid" id="propertyGrid"></div><p class="empty" id="emptyState" hidden>No encontramos propiedades con esos filtros. Solicita ayuda a un asesor.</p></section>
+      <section class="proof section-pad"><div class="proof-grid"><div><b>01</b><h3>Información actualizada</h3><p>Características, precios y disponibilidad en una fuente autorizada.</p></div><div><b>02</b><h3>Asesoría humana</h3><p>El asistente responde lo confirmado y deriva las excepciones al equipo.</p></div><div><b>03</b><h3>Seguimiento accionable</h3><p>Cada consulta se registra en el CRM para no perder oportunidades.</p></div></div></section>
+      <footer id="contacto"><div><strong id="footerName">Inmobiliaria</strong><small id="footerContact">Hablemos de su próxima propiedad.</small></div><button class="nav-contact" data-contact>Solicitar asesoría</button></footer>
+    </main>
+    <aside class="chat" id="chat"><button class="chat-head" id="closeChat">×</button><div class="chat-title"><span id="chatShortName">IN</span><div><b id="chatName">Asistente inmobiliario</b><small>En línea · atención personalizada</small></div></div><div class="chat-messages" id="messages"><div class="bot">¡Hola! Puedo ayudarte a encontrar una propiedad o agendar una visita.</div></div><div class="quick"><button>Ver propiedades</button><button>Agendar visita</button><button>Hablar con asesor</button></div><form id="chatForm"><input id="chatInput" placeholder="Escribe tu consulta..." /><button>Enviar</button></form></aside><button class="chat-fab" id="openChat"><span>✦</span> Consultar</button>
+    <div class="toast" id="toast">Tu consulta fue registrada para seguimiento.</div>
+    <script src="site-config.js"></script><script src="app.js"></script>
+  </body>
+</html>
