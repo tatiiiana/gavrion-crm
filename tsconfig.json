@@ -38,6 +38,7 @@
     ".next-connected/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "m2-inmobiliaria-reference"
   ]
 }
