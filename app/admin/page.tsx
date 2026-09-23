@@ -11,7 +11,7 @@ type Owner = { id: string; name: string; email: string } | null;
 type Implementation = { id: string; name: string; slug: string; plan: string; template_key: string; implementation_template_id:string|null; implementation_status: string; settings: { modules?: string[] }; created_at: string; owner: Owner };
 type TemplateConfiguration = { modules?:string[]; tenant_settings?:Record<string,unknown>; branding?:Record<string,unknown>; assistant?:Record<string,unknown>; knowledge?:unknown[]; automations?:unknown[]; company_profile?:Record<string,unknown>; pipeline?:Record<string,unknown>; custom_fields?:unknown[]; catalog?:unknown[]; quick_replies?:unknown[]; notifications?:Record<string,unknown> };
 type ImplementationTemplate = { id:string; key:string; name:string; description:string; business_type:string; configuration:TemplateConfiguration; source_tenant_id:string|null; is_system:boolean; current_version?:number; created_at:string };
-type SiteProject = { id:string; tenant_id:string; template_key:string; name:string; slug:string; status:string; updated_at:string; tenant:{id:string;name:string}|null };
+type SiteProject = { id:string; tenant_id:string; template_key:string; name:string; slug:string; status:string; updated_at:string; published_url?:string|null; deployment_status?:string|null; tenant:{id:string;name:string}|null };
 type PlatformStaff={user_id:string;email:string;role:string;active:boolean;tenant_ids:string[]};
 type Customization={id:string;tenant_id:string;template_id:string;template_version:number;status:"draft"|"review"|"approved"|"applied"|"rejected";overrides:TemplateConfiguration;review_note:string;updated_at:string;tenant?:{id:string;name:string}|null;template?:{id:string;name:string;current_version:number}|null};
 

@@ -7,7 +7,7 @@ import "./site-review.css";
 type Project={id:string;tenant_id:string;template_key:string;name:string;slug:string;status:string;configuration:GastronomySiteConfig;review_note:string|null;reviewed_at:string|null;updated_at:string;tenant?:{id:string;name:string}|null};
 type Version={id:string;version:number;configuration:GastronomySiteConfig;created_at:string;created_by:string|null};
 type ReviewResponse={project:Project;versions:Version[];canReview:boolean};
-const statusLabels:Record<string,string>={draft:"Borrador",review:"En revisión",ready:"Aprobado / listo para publicar",exported:"Exportado"};
+const statusLabels:Record<string,string>={draft:"Borrador",review:"En revisión",ready:"Aprobado / listo para publicar",exported:"Exportado",published:"Publicado"};
 const configLabels:Record<string,string>={brand:"Identidad visual",seo:"SEO",hero:"Portada",experience:"Experiencia",menu:"Menú",properties:"Catálogo inmobiliario",contact:"Contacto",social:"Redes sociales",gallery:"Galería",features:"Funciones",integrations:"CRM y chatbox",template:"Plantilla"};
 
 function changedSections(current:GastronomySiteConfig,previous?:GastronomySiteConfig){
