@@ -1,6 +1,7 @@
 export type MenuOption={id:string;name:string;price:number};
 export type MenuItem = { id:string; category:string; name:string; description:string; price:number; imageUrl:string; gallery:string[]; active:boolean; availability:{days:string[];start:string;end:string};sizes:MenuOption[];extras:MenuOption[];promotion:{enabled:boolean;label:string;price:number} };
 export type PropertyListing = { id:string; title:string; location:string; operation:"venta"|"alquiler"; status:string; price:number; currency:string; bedrooms:number|string; bathrooms:number|string; area:number|string; imageUrl:string };
+export type SiteSection = { id:string; label:string; visible:boolean };
 export type GastronomySiteConfig = {
   template:string;
   brand:{name:string;shortName:string;logoUrl:string;primaryColor:string;secondaryColor:string;backgroundColor:string;surfaceColor:string};
@@ -13,8 +14,13 @@ export type GastronomySiteConfig = {
   social:{facebook:string;instagram:string;tiktok:string};
   gallery:string[];
   features:{orders:boolean;reservations:boolean;tableQr:boolean;kitchenPreview:boolean};
-  integrations:{crmBaseUrl:string;tenantKey:string;useRealChatbox:boolean};
+  integrations:{crmBaseUrl:string;tenantKey:string;useRealChatbox:boolean;useLiveCatalog:boolean};
+  layout:{sections:SiteSection[]};
 };
+
+export const defaultSiteSections:SiteSection[]=[
+  {id:"inicio",label:"Portada",visible:true},{id:"experiencia",label:"Experiencia",visible:true},{id:"nosotros",label:"Experiencia",visible:true},{id:"propiedades",label:"Catálogo",visible:true},{id:"menu",label:"Menú",visible:true},{id:"operaciones",label:"Operaciones",visible:true},{id:"proof",label:"Beneficios",visible:true},{id:"contacto",label:"Contacto",visible:true},
+];
 
 export const gastronomyDefaultConfig:GastronomySiteConfig={
   template:"gastronomia-a",
@@ -32,7 +38,8 @@ export const gastronomyDefaultConfig:GastronomySiteConfig={
   social:{facebook:"",instagram:"",tiktok:""},
   gallery:[],
   features:{orders:true,reservations:true,tableQr:true,kitchenPreview:true},
-  integrations:{crmBaseUrl:"https://gavrion-crm.vercel.app",tenantKey:"",useRealChatbox:false}
+  integrations:{crmBaseUrl:"https://gavrion-crm.vercel.app",tenantKey:"",useRealChatbox:false,useLiveCatalog:false},
+  layout:{sections:defaultSiteSections}
 };
 
 function menuItem(id:string,category:string,name:string,description:string,price:number,imageUrl:string):MenuItem{return{id,category,name,description,price,imageUrl,gallery:[],active:true,availability:{days:["lun","mar","mié","jue","vie","sáb","dom"],start:"00:00",end:"23:59"},sizes:[],extras:[],promotion:{enabled:false,label:"",price:0}}}
@@ -49,10 +56,23 @@ export function sanitizeSiteConfig(input:unknown):GastronomySiteConfig{
     brand:{...gastronomyDefaultConfig.brand,...value.brand},seo:{...gastronomyDefaultConfig.seo,...value.seo},
     hero:{...gastronomyDefaultConfig.hero,...value.hero},experience:{...gastronomyDefaultConfig.experience,...value.experience},
     contact:{...gastronomyDefaultConfig.contact,...value.contact},social:{...gastronomyDefaultConfig.social,...value.social},gallery:Array.isArray(value.gallery)?value.gallery.map(String).slice(0,12):[],features:{...gastronomyDefaultConfig.features,...value.features},
-    integrations:{...gastronomyDefaultConfig.integrations,...value.integrations},
+    integrations:{crmBaseUrl:String(value.integrations?.crmBaseUrl||gastronomyDefaultConfig.integrations.crmBaseUrl).slice(0,300),tenantKey:String(value.integrations?.tenantKey||"").slice(0,120),useRealChatbox:value.integrations?.useRealChatbox===true,useLiveCatalog:value.integrations?.useLiveCatalog===true},
+    layout:{sections:Array.isArray(value.layout?.sections)?value.layout.sections.map((raw)=>{const item=raw as Partial<SiteSection>;return{id:String(item.id||""),label:String(item.label||item.id||"Sección").slice(0,60),visible:item.visible!==false}}).filter(item=>item.id).slice(0,20):defaultSiteSections},
     properties:Array.isArray(value.properties)?value.properties.slice(0,60).map(raw=>{const item=raw as Partial<PropertyListing>;return{id:String(item.id||crypto.randomUUID()),title:String(item.title||"Propiedad").slice(0,140),location:String(item.location||"").slice(0,180),operation:item.operation==="alquiler"?"alquiler":"venta",status:String(item.status||"Disponible").slice(0,40),price:Math.max(0,Number(item.price||0)),currency:String(item.currency||"USD").slice(0,8),bedrooms:typeof item.bedrooms==="number"||typeof item.bedrooms==="string"?item.bedrooms:0,bathrooms:typeof item.bathrooms==="number"||typeof item.bathrooms==="string"?item.bathrooms:0,area:typeof item.area==="number"||typeof item.area==="string"?item.area:0,imageUrl:String(item.imageUrl||"").slice(0,2000)}}):[],
     menu:{...gastronomyDefaultConfig.menu,...menu,categories:Array.isArray(menu.categories)?menu.categories.map(String).filter(Boolean).slice(0,20):gastronomyDefaultConfig.menu.categories,items:Array.isArray(menu.items)?menu.items.slice(0,200).map(raw=>{const item=raw as Partial<MenuItem>;return {...menuItem("","Menú","","",0,""),...item,id:String(item.id||crypto.randomUUID()),category:String(item.category||"Menú").slice(0,80),name:String(item.name||"").slice(0,120),description:String(item.description||"").slice(0,500),price:Math.max(0,Number(item.price||0)),imageUrl:String(item.imageUrl||""),gallery:Array.isArray(item.gallery)?item.gallery.map(String).slice(0,8):[],availability:{days:Array.isArray(item.availability?.days)?item.availability.days.map(String).slice(0,7):["lun","mar","mié","jue","vie","sáb","dom"],start:String(item.availability?.start||"00:00"),end:String(item.availability?.end||"23:59")},sizes:sanitizeOptions(item.sizes),extras:sanitizeOptions(item.extras),promotion:{enabled:item.promotion?.enabled===true,label:String(item.promotion?.label||"").slice(0,80),price:Math.max(0,Number(item.promotion?.price||0))},active:item.active!==false}}):gastronomyDefaultConfig.menu.items}
   };
+}
+
+// Evita que campos privados lleguen a site-config.js, ZIPs o despliegues públicos,
+// incluso si una configuración antigua contiene claves no reconocidas.
+export function removePrivateConfigKeys<T>(input:T):T {
+  const forbidden=/(token|secret|password|credential|private.?key|access.?key|client.?secret|api.?key)/i;
+  const clean=(value:unknown):unknown=>{
+    if(Array.isArray(value))return value.map(clean);
+    if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).filter(([key])=>!forbidden.test(key)).map(([key,item])=>[key,clean(item)]));
+    return value;
+  };
+  return clean(input) as T;
 }
 
 function sanitizeOptions(input:unknown):MenuOption[]{return Array.isArray(input)?input.slice(0,20).map(raw=>{const item=raw as Partial<MenuOption>;return{id:String(item.id||crypto.randomUUID()),name:String(item.name||"").slice(0,80),price:Math.max(0,Number(item.price||0))}}).filter(item=>item.name):[]}
