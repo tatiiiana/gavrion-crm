@@ -123,3 +123,5 @@ async function scanFrame(){
   if(stream) requestAnimationFrame(scanFrame);
 }
 function stopScanner(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=undefined; } q('#scannerVideo').classList.remove('active'); q('.scanner-frame').classList.remove('scanning'); }
+function applyLayout(){const layout=window.GAVRION_SITE?.layout?.sections||[];const root=document.querySelector('main');if(!root)return;layout.forEach((item)=>{const node=document.getElementById(item.id)||(item.id==='proof'?document.querySelector('.proof'):item.id==='contacto'?document.querySelector('footer'):null);if(!node)return;node.hidden=item.visible===false;if(item.visible!==false)root.append(node)})}
+applyLayout();
