@@ -6,7 +6,7 @@ import {getSiteTemplate} from "@/lib/site-templates/catalog";
 export async function GET(){
   const access=await requirePlatformPermission("sites.read");
   if(!access)return NextResponse.json({error:"No tienes permiso para ver proyectos de sitios."},{status:403});
-  let query=access.admin.from("site_projects").select("id,tenant_id,template_key,name,slug,status,configuration,created_at,updated_at").order("updated_at",{ascending:false});if(access.tenantIds)query=query.in("tenant_id",access.tenantIds.length?access.tenantIds:["00000000-0000-0000-0000-000000000000"]);
+  let query=access.admin.from("site_projects").select("id,tenant_id,template_key,name,slug,status,configuration,published_url,custom_domain,domain_status,deployment_status,deployment_error,vercel_project_id,vercel_deployment_id,published_version,published_at,created_at,updated_at").order("updated_at",{ascending:false});if(access.tenantIds)query=query.in("tenant_id",access.tenantIds.length?access.tenantIds:["00000000-0000-0000-0000-000000000000"]);
   const {data,error}=await query;
   if(error)return NextResponse.json({error:error.code==="42P01"?"Falta instalar la migración 019_site_builder.sql en Supabase.":error.message,code:error.code},{status:error.code==="42P01"?503:400});
   const tenantIds=[...new Set((data||[]).map(item=>item.tenant_id))];
@@ -31,7 +31,7 @@ export async function POST(request:Request){
 
 export async function PATCH(request:Request){
   const body=await request.json();const id=String(body.id||"");const status=String(body.status||"draft");
-  if(!id||!["draft","review","ready","exported"].includes(status))return NextResponse.json({error:"Datos inválidos."},{status:400});
+  if(!id||!["draft","review","ready","exported","published"].includes(status))return NextResponse.json({error:"Datos inválidos."},{status:400});
   const lookupAdmin=(await requirePlatformPermission("sites.read"))?.admin;if(!lookupAdmin)return NextResponse.json({error:"Acceso denegado."},{status:403});const project=await lookupAdmin.from("site_projects").select("tenant_id").eq("id",id).maybeSingle();if(!project.data)return NextResponse.json({error:"Proyecto inexistente."},{status:404});const access=await requirePlatformPermission("sites.write",project.data.tenant_id);if(!access)return NextResponse.json({error:"No tienes permiso para editar este proyecto."},{status:403});
   if(status==="ready"&&!(["superadmin","implementer"] as string[]).includes(access.role))return NextResponse.json({error:"El vendedor debe enviar el sitio a revisión; la aprobación corresponde al Superadmin o Implementador."},{status:403});
   const configuration=sanitizeSiteConfig(body.configuration);

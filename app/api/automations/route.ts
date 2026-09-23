@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { requireTenantCapability } from "@/lib/tenant-access";
 
 async function context(admin = false) {
   const supabase = await createServerSupabase();
@@ -11,7 +12,7 @@ async function context(admin = false) {
 }
 
 export async function GET() {
-  const ctx = await context(); if (!ctx) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  const ctx = await context(); if (!ctx || !(await requireTenantCapability("automations", ctx.membership.tenant_id))) return NextResponse.json({ error: "Solo el administrador del cliente puede consultar automatizaciones." }, { status: 403 });
   const [flows, runs] = await Promise.all([
     ctx.supabase.from("automation_flows").select("id, name, trigger_event, conditions, actions, enabled, created_at").eq("tenant_id", ctx.membership.tenant_id).order("created_at", { ascending: false }),
     ctx.supabase.from("automation_runs").select("id, flow_id, event_type, status, error_message, created_at").eq("tenant_id", ctx.membership.tenant_id).order("created_at", { ascending: false }).limit(50)
@@ -34,4 +35,3 @@ export async function PATCH(request: Request) {
   const { data, error } = await ctx.supabase.from("automation_flows").update({ enabled: Boolean(enabled) }).eq("id", id).eq("tenant_id", ctx.membership.tenant_id).select().single();
   return error ? NextResponse.json({ error: error.message }, { status: 400 }) : NextResponse.json(data);
 }
-

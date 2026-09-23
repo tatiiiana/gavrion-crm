@@ -3,6 +3,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { graphBase, graphRequest } from "@/lib/meta/client";
 import { encryptCredential } from "@/lib/security/credentials";
+import { reportServerError } from "@/lib/monitoring";
 
 const cleanEnv = (value?: string) => value?.trim().replace(/^['"]|['"]$/g, "") || "";
 const numericId = (value: unknown) => /^\d+$/.test(String(value || "").trim()) ? String(value).trim() : "";
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ ok: true, wabaId, businessId: businessId || numericId(waba.owner_business_info?.id), connections: saved });
   } catch (error) {
-    console.error("[meta-embedded-signup] No se pudo completar la conexión", error);
+    reportServerError("meta.embedded_signup", error, { tenantId: membership.tenant_id });
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo completar la conexión" }, { status: 400 });
   }
 }
