@@ -12,7 +12,8 @@ export async function GET() {
     ["021_platform_roles_site_catalog", "platform_staff", "user_id,role"],
     ["022_template_management", "implementation_template_versions", "id,template_id,version"],
     ["023_platform_template_audit_bootstrap", "platform_audit_logs", "id,action,created_at"],
-    ["024_implementation_customizations", "implementation_customizations", "id,tenant_id,template_id,status"]
+    ["024_implementation_customizations", "implementation_customizations", "id,tenant_id,template_id,status"],
+    ["027_one_site_per_company", "site_projects", "id,tenant_id,archived_at"]
   ] as const;
   const results = await Promise.all(checks.map(async ([migration, table, columns]) => {
     const { error } = await access.admin.from(table).select(columns).limit(1);

@@ -13,7 +13,7 @@ async function bundle(project: { name: string; template_key: string; configurati
   const templateDir = getSiteTemplate(project.template_key)?.key === "inmobiliaria-a" ? "inmobiliaria-a" : "gastronomia-a";
   const source = path.join(process.cwd(), "public", "templates", templateDir);
   const [html, css, app] = await Promise.all(["index.html", "styles.css", "app.js"].map((file) => readFile(path.join(source, file), "utf8")));
-  const config = removePrivateConfigKeys(sanitizeSiteConfig(project.configuration));
+  const config = removePrivateConfigKeys(sanitizeSiteConfig({ ...project.configuration as Record<string, unknown>, template: project.template_key }));
   return { templateDir, config, files: [{ file: "index.html", data: html }, { file: "styles.css", data: css }, { file: "app.js", data: app }, { file: "site-config.js", data: `window.GAVRION_SITE = ${JSON.stringify(config)};` }, { file: "vercel.json", data: JSON.stringify({ cleanUrls: true, trailingSlash: false }) }] };
 }
 

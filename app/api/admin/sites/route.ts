@@ -6,9 +6,9 @@ import {getSiteTemplate} from "@/lib/site-templates/catalog";
 export async function GET(){
   const access=await requirePlatformPermission("sites.read");
   if(!access)return NextResponse.json({error:"No tienes permiso para ver proyectos de sitios."},{status:403});
-  let query=access.admin.from("site_projects").select("id,tenant_id,template_key,name,slug,status,configuration,published_url,custom_domain,domain_status,deployment_status,deployment_error,vercel_project_id,vercel_deployment_id,published_version,published_at,created_at,updated_at").order("updated_at",{ascending:false});if(access.tenantIds)query=query.in("tenant_id",access.tenantIds.length?access.tenantIds:["00000000-0000-0000-0000-000000000000"]);
+  let query=access.admin.from("site_projects").select("id,tenant_id,template_key,name,slug,status,configuration,published_url,custom_domain,domain_status,deployment_status,deployment_error,vercel_project_id,vercel_deployment_id,published_version,published_at,created_at,updated_at").is("archived_at",null).order("updated_at",{ascending:false});if(access.tenantIds)query=query.in("tenant_id",access.tenantIds.length?access.tenantIds:["00000000-0000-0000-0000-000000000000"]);
   const {data,error}=await query;
-  if(error)return NextResponse.json({error:error.code==="42P01"?"Falta instalar la migración 019_site_builder.sql en Supabase.":error.message,code:error.code},{status:error.code==="42P01"?503:400});
+  if(error){const missingOneSiteColumn=error.code==="42703"&&/archived_at/i.test(error.message);return NextResponse.json({error:error.code==="42P01"?"Falta instalar la migración 019_site_builder.sql en Supabase.":missingOneSiteColumn?"Falta instalar la migración 027_one_site_per_company.sql en Supabase.":error.message,code:error.code},{status:error.code==="42P01"||missingOneSiteColumn?503:400})}
   const tenantIds=[...new Set((data||[]).map(item=>item.tenant_id))];
   const tenants=tenantIds.length?(await access.admin.from("tenants").select("id,name,widget_key").in("id",tenantIds)).data||[]:[];
   const tenantMap=new Map(tenants.map(tenant=>[tenant.id,tenant]));
@@ -22,9 +22,18 @@ export async function POST(request:Request){
   if(!tenantId||!getSiteTemplate(templateKey))return NextResponse.json({error:"Empresa o plantilla inválida."},{status:400});
   const {data:tenant}=await access.admin.from("tenants").select("id,name,slug,widget_key").eq("id",tenantId).maybeSingle();
   if(!tenant)return NextResponse.json({error:"La empresa no existe."},{status:404});
-  const existing=await access.admin.from("site_projects").select("*").eq("tenant_id",tenantId).eq("template_key",templateKey).maybeSingle();
-  if(existing.data)return NextResponse.json(existing.data);
+  const existing=await access.admin.from("site_projects").select("*").eq("tenant_id",tenantId).is("archived_at",null).order("updated_at",{ascending:false}).limit(1).maybeSingle();
+  if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
+  if(existing.data?.template_key===templateKey)return NextResponse.json(existing.data);
   const configuration=sanitizeSiteConfig({...siteConfigForTemplate(templateKey,tenant.name),integrations:{...siteConfigForTemplate(templateKey,tenant.name).integrations,tenantKey:tenant.widget_key||"",useRealChatbox:Boolean(tenant.widget_key)}});
+  if(existing.data){
+    const current=await access.admin.from("site_project_versions").select("version").eq("site_project_id",existing.data.id).order("version",{ascending:false}).limit(1).maybeSingle();
+    const version=(current.data?.version||0)+1;
+    const {error:versionError}=await access.admin.from("site_project_versions").insert({site_project_id:existing.data.id,version,configuration:existing.data.configuration,created_by:access.user.id});
+    if(versionError)return NextResponse.json({error:versionError.message},{status:400});
+    const {data,error}=await access.admin.from("site_projects").update({template_key:templateKey,configuration,status:"draft",name:`Sitio de ${tenant.name}`,slug:cleanSiteSlug(tenant.slug||tenant.name)}).eq("id",existing.data.id).select().single();
+    return error?NextResponse.json({error:error.message},{status:400}):NextResponse.json({...data,templateChanged:true});
+  }
   const {data,error}=await access.admin.from("site_projects").insert({tenant_id:tenantId,template_key:templateKey,name:`Sitio de ${tenant.name}`,slug:cleanSiteSlug(tenant.slug||tenant.name),configuration,created_by:access.user.id}).select().single();
   return error?NextResponse.json({error:error.message},{status:400}):NextResponse.json(data,{status:201});
 }

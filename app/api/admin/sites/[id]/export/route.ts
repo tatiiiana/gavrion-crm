@@ -19,7 +19,7 @@ export async function GET(_:Request,{params}:{params:Promise<{id:string}>}){
   const source=path.join(process.cwd(),"public","templates",templateDir);
   try{
     const [html,css,app]=await Promise.all([readFile(path.join(source,"index.html")),readFile(path.join(source,"styles.css")),readFile(path.join(source,"app.js"))]);
-    const config=removePrivateConfigKeys(sanitizeSiteConfig(data.configuration));
+    const config=removePrivateConfigKeys(sanitizeSiteConfig({ ...data.configuration as Record<string, unknown>, template: data.template_key }));
     const validation=validateSiteForPublication(config);
     if(!validation.valid)return NextResponse.json({error:"El proyecto no superó la revisión de publicación.",validation},{status:422});
     const readme=`# ${data.name}\n\nSitio independiente generado por Gavrion con la plantilla ${templateDir}.\n\n## Publicación\n\n1. Sube esta carpeta a un repositorio del cliente.\n2. Importa el repositorio en Vercel.\n3. Verifica en site-config.js la URL del CRM y el identificador del chatbox.\n4. El CRM y Supabase deben pertenecer al cliente antes de la entrega final.\n`;
