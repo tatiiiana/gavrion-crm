@@ -8,6 +8,17 @@ let stream;
 let detector;
 const config = window.GAVRION_SITE || {};
 
+// Formularios reales del CRM: reservas, pedidos, citas, cotizaciones o disponibilidad según el rubro.
+function loadGavrionForms(){
+  const base=String(config.integrations?.crmBaseUrl||'').replace(/\/$/,'');const key=String(config.integrations?.tenantKey||'');
+  if(!base||!key||document.getElementById('gavrion-forms-script'))return;
+  const script=document.createElement('script');script.id='gavrion-forms-script';script.charset='utf-8';script.src=`${base}/site-forms.js`;script.dataset.tenant=key;
+  if(config.brand?.primaryColor)script.dataset.color=config.brand.primaryColor;script.defer=true;document.body.append(script);
+}
+const crmForms=()=>window.GavrionForms&&window.GavrionForms.forms.length?window.GavrionForms:null;
+window.addEventListener('gavrion-forms:ready',()=>{const forms=crmForms();const main=forms&&forms.primary();if(main)qa('.nav-book').forEach(button=>{button.textContent=main.cta});});
+window.addEventListener('gavrion-forms:submitted',(event)=>{if(event.detail?.form==='order'){cart=[];renderCart();}});
+
 function applySiteConfig(){
   const brand=config.brand||{}, hero=config.hero||{}, experience=config.experience||{}, menu=config.menu||{};
   document.title=config.seo?.title||brand.name||document.title;
@@ -33,6 +44,7 @@ function applySiteConfig(){
   q('.menu-tabs').innerHTML=(menu.categories||[]).map((name,index)=>`<button class="${index===0?'active':''}" data-category="${name}">${name}</button>`).join('');
   renderMenuItems(menu.items||[]);
   renderLocationAndGallery();
+  loadGavrionForms();
   const features={orders:true,reservations:true,tableQr:true,kitchenPreview:true,...(config.features||{})};
   q('#openCart').hidden=!features.orders;q('#cartModal').hidden=!features.orders;
   q('#openQr').hidden=!features.tableQr;q('#qrModal').hidden=!features.tableQr;
@@ -74,6 +86,8 @@ q('#qrUrl').textContent = menuUrl;
 q('#qrImage').src = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(menuUrl)}`;
 
 qa('.nav-book').forEach((button) => button.addEventListener('click', () => {
+  const forms=crmForms();const main=forms&&forms.primary();
+  if(main){forms.open(main.type);return;}
   q('#openChat').click();
   setTimeout(() => addBot('Con gusto. Para reservar, indícame fecha, hora y número de personas.'), 180);
 }));
@@ -102,7 +116,7 @@ function respond(text){
 }
 q('#chatForm').onsubmit=(e)=>{e.preventDefault();const i=q('#chatInput'),text=i.value.trim();if(!text)return;const d=document.createElement('div');d.className='user';d.textContent=text;q('#messages').append(d);i.value='';setTimeout(()=>addBot(respond(text)),400)};
 qa('.quick button').forEach((b)=>b.onclick=()=>{q('#chatInput').value=b.textContent;q('#chatForm').requestSubmit()});
-q('#sendOrder').onclick=()=>{ if(!cart.length){q('#toast').textContent='Agrega al menos un plato para enviar el pedido.'; flash();return;} q('#cartModal').classList.remove('open');q('#toast').textContent='Pedido enviado a cocina y registrado para seguimiento.';flash();cart=[];renderCart(); };
+q('#sendOrder').onclick=()=>{ if(!cart.length){q('#toast').textContent='Agrega al menos un plato para enviar el pedido.'; flash();return;} const forms=crmForms(); if(forms&&forms.has('order')){ const grouped=Object.values(cart.reduce((acc,item)=>{acc[item.name]=acc[item.name]||{name:item.name,price:item.price,quantity:0};acc[item.name].quantity+=1;return acc;},{})); const lines=grouped.map(item=>`${item.quantity} × ${item.name} (${money(item.price*item.quantity)})`); lines.push(`Total estimado: ${money(cart.reduce((a,x)=>a+x.price,0))}`); if(new URLSearchParams(location.search).get('mesa'))lines.push(`Mesa: ${table}`); q('#cartModal').classList.remove('open'); forms.open('order',{items:lines.join('\n'),items_json:JSON.stringify(grouped)}); return; } q('#cartModal').classList.remove('open');q('#toast').textContent='Pedido enviado a cocina y registrado para seguimiento.';flash();cart=[];renderCart(); };
 
 q('#copyQrLink').onclick = async () => { try { await navigator.clipboard.writeText(menuUrl); q('#toast').textContent='Enlace del menú copiado.'; } catch { q('#toast').textContent='Copia el enlace mostrado debajo del código QR.'; } flash(); };
 q('#startScanner').onclick = startScanner;
