@@ -7,6 +7,7 @@ import "./staff.css";
 import "./company-sites.css";
 import { createClientSupabase } from "@/lib/supabase/client";
 import {siteTemplates} from "@/lib/site-templates/catalog";
+import { configuredModulesForBusiness, modulesForBusiness } from "@/lib/business-modules";
 
 type Owner = { id: string; name: string; email: string } | null;
 type Implementation = { id: string; name: string; slug: string; plan: string; template_key: string; implementation_template_id:string|null; implementation_status: string; settings: { modules?: string[] }; created_at: string; owner: Owner };
@@ -85,7 +86,11 @@ export default function SuperadminPage() {
       setCapabilities(accessData.capabilities||[]); setPlatformRole(accessData.role||""); setPlatformRoleLabel(accessData.roleLabel||"Personal interno");
       if((accessData.capabilities||[]).includes("staff.manage")){const response=await fetch("/api/admin/staff",{cache:"no-store"});if(response.ok)setStaff(await response.json())}
       if(!sitesResponse.ok)setNotice({kind:"error",text:sitesData.error||"El constructor de sitios todavía no está habilitado en Supabase."});
-      if (templatesData.length) { setTemplateId((current:string)=>current || templatesData[0].id); setModules((current:string[])=>current.length ? current : (templatesData[0].configuration?.modules || [])); }
+      if (templatesData.length) {
+        const first = templatesData[0] as ImplementationTemplate;
+        setTemplateId((current:string)=>current || first.id);
+        setModules((current:string[])=>current.length ? current : configuredModulesForBusiness(first.configuration?.modules, first.business_type));
+      }
     } catch (error) { setNotice({ kind:"error", text:error instanceof Error ? error.message : "No fue posible cargar." }); }
     finally { setLoading(false); }
   }
@@ -94,8 +99,16 @@ export default function SuperadminPage() {
   const filtered = useMemo(() => items.filter(item => `${item.name} ${item.owner?.email || ""}`.toLowerCase().includes(query.toLowerCase())), [items, query]);
   const siteRubricTemplates = useMemo(() => siteTemplates.filter((template,index,array)=>array.findIndex(item=>item.businessType===template.businessType)===index), []);
   const siteBusinessLabels:Record<string,string>={gastronomy:"Restaurantes",real_estate:"Inmobiliarias",services:"Servicios",commerce:"Comercio",hospitality:"Hoteles y turismo"};
+  const selectedCrmTemplate = templates.find(item => item.id === templateId);
+  const creationModuleOptions = moduleOptions.filter(([key]) => modulesForBusiness(selectedCrmTemplate?.business_type).includes(key));
+  const editorModuleOptions = moduleOptions.filter(([key]) => modulesForBusiness(editorDraft.business_type).includes(key));
+  const customizationModuleOptions = moduleOptions.filter(([key]) => modulesForBusiness(customizationTemplate?.business_type).includes(key));
 
-  function selectTemplate(id: string) { const selected=templates.find(item=>item.id===id); setTemplateId(id); setModules(selected?.configuration?.modules || []); }
+  function selectTemplate(id: string) {
+    const selected=templates.find(item=>item.id===id);
+    setTemplateId(id);
+    setModules(configuredModulesForBusiness(selected?.configuration?.modules, selected?.business_type));
+  }
   function toggleModule(key: string) { setModules(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key]); }
   function closeForm() { setShowForm(false); setFormError(""); setName(""); setOwnerName(""); setOwnerEmail(""); if(templates[0])selectTemplate(templates[0].id); }
 
@@ -215,7 +228,7 @@ export default function SuperadminPage() {
       <div className="modal-title"><div><p>NUEVO CLIENTE</p><h2>Nueva implementación</h2></div><button type="button" onClick={closeForm}>×</button></div>
       <div className="admin-form-grid"><label>Nombre de la empresa<input required minLength={2} value={name} onChange={event=>setName(event.target.value)} placeholder="Ej. Metro Inmobiliaria" /></label><label>Nombre del propietario<input required minLength={3} value={ownerName} onChange={event=>setOwnerName(event.target.value)} placeholder="Nombre completo" /></label><label className="wide">Correo del propietario<input required type="email" value={ownerEmail} onChange={event=>setOwnerEmail(event.target.value)} placeholder="propietario@empresa.com" /><small>Recibirá una invitación para establecer su acceso.</small></label></div>
       <fieldset><legend>Selecciona una plantilla</legend><div className="template-grid">{templates.map(option=><button type="button" key={option.id} className={templateId===option.id?"selected":""} onClick={()=>selectTemplate(option.id)}><strong>{option.name}</strong><small>{option.description}</small></button>)}</div></fieldset>
-      <fieldset><legend>Activa los módulos</legend><div className="module-grid">{moduleOptions.map(([key,label])=><label key={key}><input type="checkbox" checked={modules.includes(key)} onChange={()=>toggleModule(key)} /><span>{label}</span></label>)}</div></fieldset>
+      <fieldset><legend>Activa los módulos compatibles con este rubro</legend><p className="clone-help">Los módulos de otros rubros no pueden activarse para esta empresa.</p><div className="module-grid">{creationModuleOptions.map(([key,label])=><label key={key}><input type="checkbox" checked={modules.includes(key)} onChange={()=>toggleModule(key)} /><span>{label}</span></label>)}</div></fieldset>
       {formError&&<div className="implementation-form-error" role="alert"><strong>No se pudo completar la implementación</strong><span>{formError}</span>{/rate|limit|email|correo|mail/i.test(formError)&&<small>Si Supabase limitó los correos, espera antes de volver a intentarlo o configura un servidor SMTP propio.</small>}</div>}
       <div className="admin-modal-actions"><button type="button" className="admin-secondary" onClick={closeForm}>Cancelar</button><button disabled={saving} className="admin-primary">{saving?"Creando…":"Crear e invitar propietario"}</button></div>
     </form></div>}
