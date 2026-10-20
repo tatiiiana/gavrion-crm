@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { configuredModulesForBusiness, normalizeBusinessType } from "@/lib/business-modules";
 
 export type TemplateConfiguration = {
   modules?: string[];
@@ -74,11 +75,11 @@ export async function captureTemplateConfiguration(admin: SupabaseClient, tenant
   }
   const sourceSettings = tenant.data.settings && typeof tenant.data.settings === "object" ? tenant.data.settings : {};
   const safeSettings = sanitizeReusableSettings(sourceSettings);
-  const businessType = ["generic", "real_estate", "restaurant", "services", "commerce"].includes(tenant.data.template_key) ? tenant.data.template_key : "generic";
+  const businessType = normalizeBusinessType(tenant.data.template_key);
   return {
     businessType,
     configuration: {
-      modules: Array.isArray((sourceSettings as Record<string, unknown>).modules) ? (sourceSettings as Record<string, unknown>).modules as string[] : [],
+      modules: configuredModulesForBusiness((sourceSettings as Record<string, unknown>).modules, businessType),
       tenant_settings: safeSettings,
       branding: { logo_url: tenant.data.logo_url || null },
       assistant: assistant.data || {},
@@ -118,13 +119,17 @@ const list = (value: unknown) => Array.isArray(value) ? value : [];
 
 export async function applyTemplateConfiguration(admin: SupabaseClient, template: TemplateConfiguration, tenantId: string, userId: string, replace = false) {
   const summary = { modules: 0, assistant: 0, knowledge: 0, automations: 0, pipelineStages: 0, customFields: 0, catalog: 0 };
-  const { data: target, error: targetError } = await admin.from("tenants").select("id,settings,logo_url").eq("id", tenantId).maybeSingle();
+  const { data: target, error: targetError } = await admin.from("tenants").select("id,settings,logo_url,template_key").eq("id", tenantId).maybeSingle();
   if (targetError || !target) throw new Error(targetError?.message || "Empresa destino no encontrada.");
   const currentSettings = target.settings && typeof target.settings === "object" ? target.settings : {};
   const nextSettings = { ...currentSettings, ...(template.tenant_settings || {}) } as Record<string, unknown>;
   if (Array.isArray(template.quick_replies)) nextSettings.quick_replies = template.quick_replies;
   if (template.notifications && typeof template.notifications === "object") nextSettings.notifications = template.notifications;
-  if (Array.isArray(template.modules)) { nextSettings.modules = template.modules; summary.modules = template.modules.length; }
+  if (Array.isArray(template.modules)) {
+    const modules = configuredModulesForBusiness(template.modules, target.template_key);
+    nextSettings.modules = modules;
+    summary.modules = modules.length;
+  }
   const tenantUpdate: Record<string, unknown> = { settings: nextSettings };
   if (typeof template.branding?.logo_url === "string" && template.branding.logo_url) tenantUpdate.logo_url = template.branding.logo_url;
   const tenantResult = await admin.from("tenants").update(tenantUpdate).eq("id", tenantId);
