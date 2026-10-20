@@ -11,6 +11,9 @@ import { MetaConnections } from "./meta-connections";
 import { OperationalModule } from "./operational-module";
 import { PipelineWorkspace } from "./pipeline-workspace";
 import { CustomFields } from "./custom-fields";
+import { OwnerCenter, type OwnerNotification } from "./owner-center";
+import { NotificationBell } from "./notification-bell";
+import { configuredModulesForBusiness } from "@/lib/business-modules";
 
 const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últimos 30 días", year: "este año" };
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
@@ -20,7 +23,8 @@ type TeamMember = { id: string; name: string; email: string; role: "owner" | "ad
 type Property = { id: string; reference: string; title: string; property_type: string; operation: "sale" | "rent"; price: number; currency: string; city: string; zone: string | null; bedrooms: number | null; status: "available" | "reserved" | "sold" | "rented" | "inactive" };
 type PropertyInquiry = { id: string; customer_name: string; phone: string; intent: "buy" | "rent" | "sell"; property_type: string | null; city: string | null; zone: string | null; budget_max: number | null; bedrooms: number | null; notes: string | null; status: "new" | "contacted" | "qualified" | "closed" | "discarded" };
 type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" };
-type SettingsTab = "empresa" | "canales" | "asistente" | "chatbox";
+type SettingsTab = "control" | "empresa" | "canales" | "asistente" | "chatbox";
+const setupTabs: SettingsTab[] = ["empresa", "canales", "asistente", "chatbox"];
 
 export default function Dashboard() {
   const [authReady, setAuthReady] = useState(false);
@@ -53,7 +57,8 @@ export default function Dashboard() {
   const [dataLoading, setDataLoading] = useState(true);
   const [notice, setNotice] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [view, setView] = useState(() => typeof window === "undefined" ? "inicio" : new URLSearchParams(window.location.search).get("view") || "inicio");
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("empresa");
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("control");
+  const [bellRefresh, setBellRefresh] = useState(0);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("30d");
   const [dashboardMetrics, setDashboardMetrics] = useState({ contacts: 0, conversations: 0, deals: 0, won: 0, pipeline: 0 });
@@ -151,15 +156,16 @@ export default function Dashboard() {
         let company = String(user.user_metadata?.company_name || "");
         if (membership?.tenant_id) {
           setTenantId(membership.tenant_id);
-          const { data: tenant } = await supabase.from("tenants").select("name, logo_url, widget_key, settings").eq("id", membership.tenant_id).maybeSingle();
+          const { data: tenant } = await supabase.from("tenants").select("name, logo_url, widget_key, settings, template_key").eq("id", membership.tenant_id).maybeSingle();
           if (tenant?.name) company = tenant.name;
           const logoUrl = String(tenant?.logo_url || "");
           setTenantLogoUrl(logoUrl);
           setBrandingName(company);
           setBrandingLogoUrl(logoUrl);
           setWidgetKey(String(tenant?.widget_key || ""));
-          const configuredModules = Array.isArray(tenant?.settings?.modules) ? tenant.settings.modules.filter((item: unknown): item is string => typeof item === "string") : null;
-          setEnabledModules(configuredModules);
+          // También corrige empresas creadas antes de esta regla: el menú jamás
+          // debe mezclar módulos de otros rubros aunque estén guardados en settings.
+          setEnabledModules(configuredModulesForBusiness(tenant?.settings?.modules, tenant?.template_key));
 
           const [assistantResult, knowledgeResult] = await Promise.all([
             supabase.from("assistant_settings").select("enabled, assistant_name, instructions, handoff_message").eq("tenant_id", membership.tenant_id).maybeSingle(),
@@ -351,6 +357,36 @@ export default function Dashboard() {
   }
 
   function navigate(next: string) { setView(next); if (next !== "configuracion") setSettingsMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }
+  function openSettings(tab: SettingsTab) { setSettingsTab(tab); setSettingsMenuOpen(true); navigate("configuracion"); }
+  // Lleva al módulo relacionado con cada alerta del centro de notificaciones.
+  function openOwnerNotification(item: OwnerNotification) {
+    setBellRefresh(value => value + 1);
+    const target: Record<string, string> = { reservations: "reservaciones", orders: "pedidos", appointments: "citas", quotes: "cotizaciones", property_inquiry: "inmobiliaria", property_visit: "inmobiliaria", automation_flow: "automatizaciones" };
+    if (item.entity_type === "conversation") {
+      const index = threads.findIndex(thread => thread.id === item.entity_id);
+      if (index >= 0) setSelectedThread(index);
+      navigate("conversaciones"); return;
+    }
+    if (item.entity_type === "channel_connection") { openSettings("canales"); return; }
+    const view = item.entity_type ? target[item.entity_type] : undefined;
+    if (view && roleAllowsModule(view)) { navigate(view); return; }
+    openSettings("control");
+  }
+
+  useEffect(() => {
+    if (!enabledModules) return;
+    const moduleByView: Record<string, string> = {
+      inicio: "dashboard", conversaciones: "conversations", inmobiliaria: "properties",
+      reservaciones: "reservations", pedidos: "orders", citas: "appointments", cotizaciones: "quotes",
+      productos: "products", contactos: "contacts", pipeline_v2: "pipeline", campos: "pipeline",
+      equipo: "team", automatizaciones: "automations", reportes: "reports"
+    };
+    const requiredModule = moduleByView[view];
+    if (requiredModule && !enabledModules.includes(requiredModule)) {
+      setView("inicio");
+      setNotice({ type: "error", text: "Esta sección no está habilitada para el rubro de esta empresa." });
+    }
+  }, [enabledModules, view]);
   async function saveContact(event: FormEvent) {
     event.preventDefault(); if (!contactName.trim() || !tenantId) return;
     const supabase = createClientSupabase();
@@ -646,11 +682,11 @@ export default function Dashboard() {
     <aside className="sidebar">
       <div className="brand gavrion-brand tenant-brand">{tenantLogoUrl && !logoFailed ? <img className="tenant-logo" src={tenantLogoUrl} alt={`Logo de ${account.company || "la empresa"}`} onError={()=>setLogoFailed(true)} /> : <span className="brand-mark">{(account.company || "E").charAt(0).toUpperCase()}</span>}<span>{account.company || "Mi empresa"}</span></div>
       <nav className="nav">{[["inicio","⌂","Inicio","dashboard"],["conversaciones","◫","Conversaciones","conversations"],["inmobiliaria","▤","Inmobiliaria","properties"],["reservaciones","▣","Reservaciones","reservations"],["pedidos","▤","Pedidos","orders"],["citas","◷","Citas","appointments"],["cotizaciones","◇","Cotizaciones","quotes"],["productos","▦","Productos","products"],["contactos","♙","Contactos","contacts"],["pipeline_v2","▦","Pipeline","pipeline"],["campos","＋","Campos personalizados","pipeline"],["equipo","♧","Equipo","team"],["automatizaciones","⌁","Automatizaciones","automations"],["reportes","⌗","Reportes","reports"],["auditoria","◉","Auditoría","audit"]].filter(([id,,,module])=>roleAllowsModule(id)&& (enabledModules===null||enabledModules.includes(module))).map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&totalUnread>0&&<i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
-      <div className="sidebar-bottom">{isClientAdmin&&<><button type="button" aria-expanded={settingsMenuOpen} onClick={()=>{if(view!=="configuracion"){setSettingsMenuOpen(true);navigate("configuracion")}else setSettingsMenuOpen(value=>!value)}} className={`nav-item settings-parent ${view==="configuracion"?"active":""}`}><span>⚙</span><span>Configuración</span><b className={`settings-chevron ${settingsMenuOpen?"open":""}`}>⌄</b></button>{settingsMenuOpen&&<nav className="settings-sidebar-menu" aria-label="Submenú de configuración"><button type="button" className={view==="configuracion"&&settingsTab==="empresa"?"active":""} onClick={()=>{setSettingsTab("empresa");navigate("configuracion")}}><span>⌂</span>Empresa y widget</button><button type="button" className={view==="configuracion"&&settingsTab==="canales"?"active":""} onClick={()=>{setSettingsTab("canales");navigate("configuracion")}}><span>◉</span>Canales y conexiones</button><button type="button" className={view==="configuracion"&&settingsTab==="asistente"?"active":""} onClick={()=>{setSettingsTab("asistente");navigate("configuracion")}}><span>✦</span>Asistente IA</button><button type="button" className={view==="configuracion"&&settingsTab==="chatbox"?"active":""} onClick={()=>{setSettingsTab("chatbox");navigate("configuracion")}}><span>▣</span>Instalación web</button></nav>}</>}<div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
+      <div className="sidebar-bottom">{isClientAdmin&&<><button type="button" aria-expanded={settingsMenuOpen} onClick={()=>{if(view!=="configuracion"){setSettingsMenuOpen(true);navigate("configuracion")}else setSettingsMenuOpen(value=>!value)}} className={`nav-item settings-parent ${view==="configuracion"?"active":""}`}><span>⚙</span><span>Configuración</span><b className={`settings-chevron ${settingsMenuOpen?"open":""}`}>⌄</b></button>{settingsMenuOpen&&<nav className="settings-sidebar-menu" aria-label="Submenú de configuración"><button type="button" className={view==="configuracion"&&settingsTab==="control"?"active":""} onClick={()=>openSettings("control")}><span>◎</span>Centro de control</button><button type="button" className={view==="configuracion"&&settingsTab==="empresa"?"active":""} onClick={()=>{setSettingsTab("empresa");navigate("configuracion")}}><span>⌂</span>Empresa y widget</button><button type="button" className={view==="configuracion"&&settingsTab==="canales"?"active":""} onClick={()=>{setSettingsTab("canales");navigate("configuracion")}}><span>◉</span>Canales y conexiones</button><button type="button" className={view==="configuracion"&&settingsTab==="asistente"?"active":""} onClick={()=>{setSettingsTab("asistente");navigate("configuracion")}}><span>✦</span>Asistente IA</button><button type="button" className={view==="configuracion"&&settingsTab==="chatbox"?"active":""} onClick={()=>{setSettingsTab("chatbox");navigate("configuracion")}}><span>▣</span>Instalación web</button></nav>}</>}<div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
     </aside>
     <main className="main">
       {supportMode&&<div className="support-mode-banner"><strong>Modo soporte:</strong> estás operando dentro de {account.company}. Todas las acciones quedan registradas.<a href="/admin">Volver al panel</a></div>}
-      <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div></header>
+      <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="topbar-actions"><div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div>{isClientAdmin&&<NotificationBell refreshKey={bellRefresh} onOpen={openOwnerNotification} onSeeAll={()=>openSettings("control")} />}</div></header>
       {view === "inicio" && <section className="view active">
         <div className="hero-row"><div><h2>Todo avanza en la dirección correcta.</h2><p>Aquí tienes el resumen de tu equipo y tus clientes.</p></div><select className="select" aria-label="Filtrar periodo" value={period} onChange={e => setPeriod(e.target.value as Period)}><option value="30d">Últimos 30 días</option><option value="week">Esta semana</option><option value="year">Este año</option></select></div>
         <div className="metrics-grid">{[
@@ -707,7 +743,8 @@ export default function Dashboard() {
 
       {view === "configuracion" && isClientAdmin && <section className="view active">
         <div className="section-heading"><div><h2>Configuración</h2><p>Administra la identidad y los servicios de esta empresa.</p></div></div>
-        <div className="settings-tab-caption"><span>{settingsTab==="empresa"?"Identidad y experiencia del cliente":settingsTab==="canales"?"Conecta y administra tus canales de mensajería":settingsTab==="asistente"?"Define cómo responde tu asistente automático":"Lleva el chatbox a la web de tu empresa"}</span><span className="settings-tab-step">{settingsTab==="empresa"?"1":settingsTab==="canales"?"2":settingsTab==="asistente"?"3":"4"} de 4</span></div>
+        <div className="settings-tab-caption"><span>{settingsTab==="control"?"Alertas, salud de integraciones, actividad y control de tus datos":settingsTab==="empresa"?"Identidad y experiencia del cliente":settingsTab==="canales"?"Conecta y administra tus canales de mensajería":settingsTab==="asistente"?"Define cómo responde tu asistente automático":"Lleva el chatbox a la web de tu empresa"}</span>{setupTabs.includes(settingsTab)&&<span className="settings-tab-step">{setupTabs.indexOf(settingsTab)+1} de {setupTabs.length}</span>}</div>
+        {settingsTab==="control"&&<OwnerCenter onNavigateSettings={tab=>{if(setupTabs.includes(tab as SettingsTab))setSettingsTab(tab as SettingsTab)}} onOpenNotification={openOwnerNotification} onChanged={()=>setBellRefresh(value=>value+1)} />}
         {settingsTab==="empresa"&&<CompanySettings />}
         {settingsTab==="canales"&&<MetaConnections />}
         {settingsTab==="asistente"&&<form className="panel assistant-settings" onSubmit={saveAssistant}><div className="assistant-settings-head"><div><p className="eyebrow">ASISTENTE AUTOMÁTICO</p><h3>Conocimiento de la empresa</h3><p>Escribe información confirmada sobre servicios, horarios, ubicación, precios, políticas y preguntas frecuentes.</p></div><label className="assistant-switch"><input type="checkbox" checked={assistantEnabled} onChange={e=>setAssistantEnabled(e.target.checked)} /> Respuestas automáticas</label></div><div className="assistant-fields"><label>Nombre del asistente<input value={assistantName} onChange={e=>setAssistantName(e.target.value)} placeholder="Asistente virtual" /></label><label>Instrucciones de tono<input value={assistantInstructions} onChange={e=>setAssistantInstructions(e.target.value)} placeholder="Amable, breve y profesional" /></label></div><label>Información para responder<textarea required rows={10} value={knowledgeContent} onChange={e=>setKnowledgeContent(e.target.value)} placeholder={'Ejemplo:\nHorario: todos los días de 6:30 a. m. a 9:00 p. m.\nUbicación: CA-4, km 115.\nEspecialidades: sopa de gallina india, pescado frito...'} /></label><label>Mensaje de transferencia<input value={handoffMessage} onChange={e=>setHandoffMessage(e.target.value)} /></label><div className="assistant-save"><small>La IA transferirá cuando no encuentre una respuesta confirmada o el visitante pida una persona.</small><button className="primary-button" disabled={savingAssistant}>{savingAssistant?"Guardando…":"Guardar y activar"}</button></div></form>}
