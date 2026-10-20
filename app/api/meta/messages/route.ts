@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { getMetaConnectionById, graphBase } from "@/lib/meta/client";
+import { reportChannelError, reportChannelOk } from "@/lib/tenant-notifications";
 
 export async function POST(request: Request) {
   const supabase = await createServerSupabase();
@@ -20,8 +21,13 @@ export async function POST(request: Request) {
     ? { messaging_product: "whatsapp", recipient_type: "individual", to: conversation.external_thread_id, type: "text", text: { preview_url: false, body: String(text).trim() } }
     : { recipient: { id: conversation.external_thread_id }, messaging_type: "RESPONSE", message: { text: String(text).trim() } };
   const metaResponse = await fetch(`${graphBase}/${accountId}/messages`, { method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  const result = await metaResponse.json();
-  if (!metaResponse.ok) return NextResponse.json({ error: result.error?.message || "Meta rechazó el mensaje" }, { status: 502 });
+  const result = await metaResponse.json().catch(() => ({}));
+  if (!metaResponse.ok) {
+    const message = result.error?.message || "Meta rechazó el mensaje";
+    await reportChannelError({ tenantId: conversation.tenant_id, connectionId: conversation.channel_connection_id, provider: conversation.channel, message });
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+  await reportChannelOk({ tenantId: conversation.tenant_id, connectionId: conversation.channel_connection_id });
   const externalId = result.messages?.[0]?.id || result.message_id;
   const { data: saved, error } = await supabase.from("messages").insert({ tenant_id: conversation.tenant_id, conversation_id: conversation.id, direction: "outbound", sender_type: "agent", sender_id: auth.user.id, body: String(text).trim(), external_message_id: externalId, metadata: { provider: "meta", delivery_status: "accepted" } }).select("id, body, direction, created_at").single();
   if (!error) await supabase.from("conversations").update({ last_message_at: new Date().toISOString(), handling_mode: "human", assigned_to: auth.user.id }).eq("id", conversation.id);

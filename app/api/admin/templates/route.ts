@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePlatformPermission } from "@/lib/platform-access";
 import { applyTemplateConfiguration, captureTemplateConfiguration, normalizeConfiguration, recordPlatformAudit, type TemplateConfiguration } from "@/lib/template-management";
+import { configuredModulesForBusiness, normalizeBusinessType } from "@/lib/business-modules";
 
 function templateKey(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 55);
@@ -130,8 +131,10 @@ export async function PATCH(request: Request) {
   if (body.action === "update" || body.action === "restore_version") {
     const incoming = body.action === "restore_version" ? (await access.admin.from("implementation_template_versions").select("name,description,business_type,configuration").eq("id", String(body.versionId || "")).eq("template_id", id).maybeSingle()).data : body;
     if (!incoming) return NextResponse.json({ error:"Versión no encontrada." }, { status:404 });
+    const business_type = normalizeBusinessType(incoming.business_type ?? current.business_type);
     const configuration = normalizeConfiguration(incoming.configuration || current.configuration);
-    const next = { name: String(incoming.name || current.name).trim().slice(0,120), description: String(incoming.description ?? current.description).trim().slice(0,280), business_type: ["generic","real_estate","restaurant","services","commerce","hospitality"].includes(incoming.business_type) ? incoming.business_type : current.business_type, configuration };
+    configuration.modules = configuredModulesForBusiness(configuration.modules, business_type);
+    const next = { name: String(incoming.name || current.name).trim().slice(0,120), description: String(incoming.description ?? current.description).trim().slice(0,280), business_type, configuration };
     if (next.name.length < 3) return NextResponse.json({ error:"El nombre debe tener al menos 3 caracteres." }, { status:400 });
     const update = await access.admin.from("implementation_templates").update(next).eq("id", id).select().single();
     if (update.error || !update.data) return NextResponse.json({ error:update.error?.message || "No se pudo guardar la plantilla." }, { status:400 });
@@ -146,6 +149,7 @@ export async function PATCH(request: Request) {
     if (!tenantId) return NextResponse.json({ error:"Selecciona una empresa destino." }, { status:400 });
     if (access.tenantIds && !access.tenantIds.includes(tenantId)) return NextResponse.json({ error:"No tienes este tenant asignado para aplicar plantillas." }, { status:403 });
     const configuration = normalizeConfiguration(current.configuration);
+    configuration.modules = configuredModulesForBusiness(configuration.modules, current.business_type);
     if (body.action === "preview") {
       const existing = await targetSnapshot(access.admin, tenantId);
       if (!existing) return NextResponse.json({ error:"Empresa destino no encontrada." }, { status:404 });

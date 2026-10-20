@@ -4,6 +4,7 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { runAutomations } from "@/lib/automations/engine";
 import { findMetaConnection, graphRequest } from "@/lib/meta/client";
 import { respondToMetaConversation } from "@/lib/ai/respond-meta";
+import { notifyTenantAdmins } from "@/lib/tenant-notifications";
 
 export const runtime = "nodejs";
 
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
         if (!conversation) continue;
         const text = messageText(incoming);
         await supabase.from("messages").insert({ tenant_id: tenantId, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: incoming.id, metadata: { type: incoming.type, raw: incoming } });
+        await notifyTenantAdmins({ tenantId, type: "message", title: "Nuevo mensaje de WhatsApp", body: `${profile}: ${text}`, entityType: "conversation", entityId: conversation.id, dedupeMinutes: 30 });
         await runAutomations({ tenantId, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profile, channel: "whatsapp", text } });
         try {
           const { data: tenant } = await supabase.from("tenants").select("name").eq("id", tenantId).single();
@@ -98,6 +100,7 @@ export async function POST(request: Request) {
       const { data: duplicate } = await supabase.from("messages").select("id").eq("tenant_id", socialConnection.tenant_id).eq("external_message_id", externalId).maybeSingle();
       if (duplicate) continue;
       await supabase.from("messages").insert({ tenant_id: socialConnection.tenant_id, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, external_message_id: externalId, metadata: { provider, raw: event } });
+      await notifyTenantAdmins({ tenantId: socialConnection.tenant_id, type: "message", title: provider === "instagram" ? "Nuevo mensaje de Instagram" : "Nuevo mensaje de Messenger", body: `${profileName}: ${text}`, entityType: "conversation", entityId: conversation.id, dedupeMinutes: 30 });
       await runAutomations({ tenantId: socialConnection.tenant_id, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: profileName, channel: provider, text } });
       try {
         const { data: tenant } = await supabase.from("tenants").select("name").eq("id", socialConnection.tenant_id).single();

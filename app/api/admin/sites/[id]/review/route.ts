@@ -1,6 +1,7 @@
 import {NextResponse} from "next/server";
 import {requireSitePermission} from "@/lib/site-access";
 import {sanitizeSiteConfig} from "@/lib/site-builder";
+import { notifyTenantAdmins } from "@/lib/tenant-notifications";
 
 const reviewerRoles=["superadmin","implementer"];
 
@@ -28,12 +29,13 @@ export async function PATCH(request:Request,{params}:{params:Promise<{id:string}
   const reviewNote=String(body.reviewNote||"").trim().slice(0,1000);
   if(!["approve","reject"].includes(action))return NextResponse.json({error:"Acción de revisión inválida."},{status:400});
   if(action==="reject"&&!reviewNote)return NextResponse.json({error:"Escribe una observación para devolver el sitio al vendedor."},{status:400});
-  const {data:current,error:currentError}=await access.admin.from("site_projects").select("status").eq("id",id).maybeSingle();
+  const {data:current,error:currentError}=await access.admin.from("site_projects").select("status,tenant_id,name").eq("id",id).maybeSingle();
   if(currentError)return NextResponse.json({error:currentError.message},{status:400});
   if(!current)return NextResponse.json({error:"El proyecto no existe."},{status:404});
   if(current.status!=="review")return NextResponse.json({error:"El sitio solo puede aprobarse o devolverse cuando está en revisión."},{status:409});
   const status=action==="approve"?"ready":"draft";
   const {data,error}=await access.admin.from("site_projects").update({status,review_note:action==="approve"?null:reviewNote,reviewed_by:access.user.id,reviewed_at:new Date().toISOString()}).eq("id",id).select("id,status,review_note,reviewed_by,reviewed_at,updated_at").single();
   if(error)return NextResponse.json({error:error.code==="42703"?"Aplica la migración 025_site_review_workflow.sql en Supabase.":error.message},{status:400});
+  if (action === "reject") void notifyTenantAdmins({ tenantId: current.tenant_id, type: "site_returned", title: "El sitio requiere ajustes", body: reviewNote, entityType: "site_project", entityId: id });
   return NextResponse.json(data);
 }

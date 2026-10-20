@@ -6,6 +6,8 @@ import { removePrivateConfigKeys, sanitizeSiteConfig, validateSiteForPublication
 import { getSiteTemplate } from "@/lib/site-templates/catalog";
 import { attachVercelDomain, deployVercelSite, readVercelDomain } from "@/lib/vercel";
 import { reportServerError } from "@/lib/monitoring";
+import { notifyTenantAdmins } from "@/lib/tenant-notifications";
+import { bindSiteToTenant } from "@/lib/site-binding";
 
 function validDomain(value: string) { return value.length <= 253 && /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(value); }
 
@@ -22,10 +24,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const access = await requireSitePermission("sites.export", id);
   if (!access || !["superadmin", "implementer"].includes(access.role)) return NextResponse.json({ error: "Solo Superadmin o Implementador puede publicar un sitio aprobado." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
-  const { data: project, error } = await access.admin.from("site_projects").select("id,name,template_key,configuration,status,vercel_project_id,custom_domain,domain_status").eq("id", id).maybeSingle();
+  const { data: project, error } = await access.admin.from("site_projects").select("id,tenant_id,name,template_key,configuration,status,vercel_project_id,custom_domain,domain_status").eq("id", id).maybeSingle();
   if (error || !project) return NextResponse.json({ error: error?.message || "El proyecto no existe." }, { status: 404 });
   if (!["ready", "published", "exported"].includes(project.status)) return NextResponse.json({ error: "El sitio debe estar aprobado antes de publicarlo." }, { status: 409 });
-  const built = await bundle(project);
+  // Conecta el sitio con su empresa: formularios, catálogo y chatbox apuntan siempre al CRM correcto.
+  const bound = await bindSiteToTenant(access.admin, project.tenant_id, (project.configuration || {}) as Record<string, unknown>, request.url);
+  if (bound.error) return NextResponse.json({ error: bound.error }, { status: 422 });
+  const built = await bundle({ ...project, configuration: bound.config });
   const validation = validateSiteForPublication(built.config);
   if (!validation.valid) return NextResponse.json({ error: "El proyecto no superó la revisión.", validation }, { status: 422 });
   const customDomain = String(body.customDomain ?? project.custom_domain ?? "").trim().toLowerCase();
@@ -42,6 +47,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const update = { status: "published", deployment_status: "ready", deployment_error: null, published_url: deployment.url, custom_domain: customDomain || null, domain_status: domainStatus, vercel_project_id: deployment.projectId, vercel_deployment_id: deployment.deploymentId, published_version: latest?.version || null, published_at: new Date().toISOString() };
     const { data, error: updateError } = await access.admin.from("site_projects").update(update).eq("id", id).select().single();
     if (updateError) throw new Error(updateError.message);
+    void notifyTenantAdmins({ tenantId: project.tenant_id, type: "site_published", title: "Tu sitio web fue publicado", body: deployment.url, entityType: "site_project", entityId: id });
     return NextResponse.json({ ...data, validation, deployment });
   } catch (cause) {
     reportServerError("site.publish", cause, { siteId: id });

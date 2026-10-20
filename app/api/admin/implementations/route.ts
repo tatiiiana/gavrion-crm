@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server";
 import { requirePlatformPermission } from "@/lib/platform-access";
 import { applyTemplateConfiguration, recordPlatformAudit, type TemplateConfiguration } from "@/lib/template-management";
-
-const templates: Record<string, string[]> = {
-  generic: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget"],
-  real_estate: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget", "properties", "inquiries", "visits"],
-  restaurant: ["dashboard", "conversations", "contacts", "tasks", "team", "automations", "reports", "assistant", "widget", "reservations", "orders"],
-  services: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget", "appointments", "quotes"],
-  commerce: ["dashboard", "conversations", "contacts", "pipeline", "tasks", "team", "automations", "reports", "assistant", "widget", "products", "orders"]
-};
+import { configuredModulesForBusiness, normalizeBusinessType } from "@/lib/business-modules";
 
 function cleanSlug(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 45);
@@ -47,8 +40,8 @@ export async function POST(request: Request) {
   const { data: selectedTemplate, error: selectedTemplateError } = await templateQuery.maybeSingle();
   if (selectedTemplateError || !selectedTemplate) return NextResponse.json({ error:selectedTemplateError?.message || "La plantilla seleccionada ya no está disponible." }, { status:400 });
   const configuration = (selectedTemplate.configuration || {}) as TemplateConfiguration;
-  const templateKey = selectedTemplate.business_type || "generic";
-  const modules = Array.isArray(body.modules) ? body.modules.filter((item: unknown): item is string => typeof item === "string") : (configuration.modules || templates[templateKey] || templates.generic);
+  const templateKey = normalizeBusinessType(selectedTemplate.business_type);
+  const modules = configuredModulesForBusiness(Array.isArray(body.modules) ? body.modules : configuration.modules, templateKey);
   if (name.length < 2 || ownerName.length < 3 || !/^\S+@\S+\.\S+$/.test(ownerEmail)) {
     return NextResponse.json({ error: "Completa correctamente empresa, propietario, correo y plantilla." }, { status: 400 });
   }

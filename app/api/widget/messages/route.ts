@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createCompanyReply, type AssistantRequest } from "@/lib/ai/company-assistant";
 import { runAutomations } from "@/lib/automations/engine";
+import { notifyTenantAdmins } from "@/lib/tenant-notifications";
 
 export const runtime = "nodejs";
 
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
   if (conversationError || !conversation) return NextResponse.json({ error: conversationError?.message || "No se pudo crear la conversación" }, { status: 400, headers: cors(origin) });
   const { data: message, error } = await supabase.from("messages").insert({ tenant_id: tenant.id, conversation_id: conversation.id, direction: "inbound", sender_type: "contact", body: text, metadata: { source: "web_widget", origin } }).select("id, direction, body, created_at").single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400, headers: cors(origin) });
+  void notifyTenantAdmins({ tenantId: tenant.id, type: "message", title: "Nuevo mensaje desde el sitio web", body: `${name || "Visitante web"}: ${text}`, entityType: "conversation", entityId: conversation.id, dedupeMinutes: 30 });
   await runAutomations({ tenantId: tenant.id, event: "message_received", payload: { conversationId: conversation.id, contactId: contact.id, contactName: name, channel: "web", text } });
   let botMessage = null;
   if (conversation.handling_mode === "bot") {
@@ -114,10 +116,12 @@ export async function POST(request: Request) {
               else taskId = task.data.id;
             }
             if (!requestError) await supabase.from("property_inquiries").update({ deal_id: dealId, follow_up_task_id: taskId }).eq("id", saved.data.id).eq("tenant_id", tenant.id);
+          if (!requestError) void notifyTenantAdmins({ tenantId: tenant.id, type: "inquiry", title: "Nuevo interesado inmobiliario", body: `${serviceRequest.customer_name} solicitó información sobre ${subject}.`, entityType: "property_inquiry", entityId: saved.data.id });
           }
         } else if (serviceRequest.type === "property_visit" && serviceRequest.customer_name && serviceRequest.phone && serviceRequest.property_reference && /^\d{4}-\d{2}-\d{2}$/.test(serviceRequest.date) && /^\d{2}:\d{2}/.test(serviceRequest.time) && serviceRequest.party_size > 0) {
           const saved = await supabase.from("property_visits").upsert({ tenant_id: tenant.id, conversation_id: conversation.id, contact_id: contact.id, property_id: propertyId, property_reference: serviceRequest.property_reference, customer_name: serviceRequest.customer_name, phone: serviceRequest.phone, requested_date: serviceRequest.date, requested_time: serviceRequest.time.slice(0, 5), party_size: serviceRequest.party_size, notes: serviceRequest.notes || null, status: "pending" }, { onConflict: "conversation_id" });
           requestError = saved.error;
+          if (!requestError) void notifyTenantAdmins({ tenantId: tenant.id, type: "appointment", title: "Nueva solicitud de visita", body: `${serviceRequest.customer_name} solicitó visitar ${serviceRequest.property_reference} el ${serviceRequest.date}.`, entityType: "property_visit" });
         }
         if (requestError) {
           console.error("[widget-request] No se pudo guardar la solicitud", requestError);
