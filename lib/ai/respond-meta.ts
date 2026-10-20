@@ -1,6 +1,7 @@
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createCompanyReply } from "@/lib/ai/company-assistant";
 import { getMetaConnectionById, graphBase } from "@/lib/meta/client";
+import { reportChannelError, reportChannelOk } from "@/lib/tenant-notifications";
 
 type MetaChannel = "whatsapp" | "facebook" | "instagram";
 
@@ -37,7 +38,11 @@ export async function respondToMetaConversation(input: {
   });
 
   const connection = await getMetaConnectionById(input.tenantId, input.connectionId);
-  if (!connection) throw new Error(`No existe una conexión activa para ${input.channel}`);
+  if (!connection) {
+    const message = `No existe una conexión activa para ${input.channel}`;
+    await reportChannelError({ tenantId: input.tenantId, connectionId: input.connectionId, provider: input.channel, message });
+    throw new Error(message);
+  }
   const payload = input.channel === "whatsapp"
     ? { messaging_product: "whatsapp", recipient_type: "individual", to: input.recipientId, type: "text", text: { preview_url: false, body: generated.reply } }
     : { recipient: { id: input.recipientId }, messaging_type: "RESPONSE", message: { text: generated.reply } };
@@ -46,8 +51,13 @@ export async function respondToMetaConversation(input: {
     headers: { Authorization: `Bearer ${connection.accessToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error?.message || "Meta rechazó la respuesta automática");
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = result.error?.message || "Meta rechazó la respuesta automática";
+    await reportChannelError({ tenantId: input.tenantId, connectionId: input.connectionId, provider: input.channel, message });
+    throw new Error(message);
+  }
+  await reportChannelOk({ tenantId: input.tenantId, connectionId: input.connectionId });
 
   await supabase.from("messages").insert({
     tenant_id: input.tenantId,
