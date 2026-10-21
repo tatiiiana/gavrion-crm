@@ -22,6 +22,7 @@ export default function SessionGuard() {
     let userId = "";
     let startedKey = "";
     let activityKey = "";
+    let heartbeatTimer = 0;
 
     async function expire(reason: "idle" | "maximum") {
       if (stopped) return;
@@ -65,6 +66,7 @@ export default function SessionGuard() {
         localStorage.setItem(startedKey, String(signedInAt));
         localStorage.setItem(activityKey, String(now));
       } else if (!localStorage.getItem(activityKey)) localStorage.setItem(activityKey, String(now));
+      void fetch("/api/auth/access-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventType: "heartbeat" }) });
       evaluate();
     }
 
@@ -75,6 +77,7 @@ export default function SessionGuard() {
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("storage", onStorage);
     const timer = window.setInterval(evaluate, 15_000);
+    heartbeatTimer = window.setInterval(() => { if (!stopped) void fetch("/api/auth/access-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventType: "heartbeat" }) }); }, 5 * 60_000);
     void initialize();
     return () => {
       stopped=true;
@@ -82,6 +85,7 @@ export default function SessionGuard() {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("storage", onStorage);
       window.clearInterval(timer);
+      window.clearInterval(heartbeatTimer);
     };
   }, [pathname]);
 
