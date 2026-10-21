@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import "./owner-center.css";
+import { createClientSupabase } from "@/lib/supabase/client";
 
 export type OwnerNotification = { id: string; type: string; title: string; body: string; entity_type: string | null; entity_id: string | null; read_at: string | null; created_at: string };
 type HealthItem = { key: string; label: string; status: string; detail: string; settingsTab?: string };
@@ -9,7 +10,7 @@ type DataRequest = { id: string; request_type: "deletion" | "account_closure"; r
 type Preferences = { in_app: boolean; browser: boolean; email_digest: boolean; muted_types: string[] };
 type Data = {
   role: "owner" | "admin";
-  account: { email: string; fullName: string; phone: string };
+  account: { email: string; fullName: string; phone: string; lastSignInAt: string | null };
   health: HealthItem[];
   site: { published_url?: string | null } | null;
   notifications: OwnerNotification[];
@@ -17,6 +18,7 @@ type Data = {
   preferences: Preferences;
   automationErrors: Array<{ id: string; error_message: string | null; created_at: string }>;
   dataRequests: DataRequest[];
+  accessHistory: Array<{ id: number; event_type: string; ip_address: string | null; user_agent: string | null; created_at: string }>;
 };
 type ActivityRow = { id: number; action: string; entity_type: string; created_at: string; by_me: boolean; by_system: boolean; name: string; changedFields: string[] };
 type Section = "resumen" | "alertas" | "actividad" | "cuenta" | "datos";
@@ -234,6 +236,7 @@ function Activity() {
 function Account({ data, saving, patch }: { data: Data; saving: boolean; patch: (body: Record<string, unknown>, message?: string) => Promise<boolean> }) {
   const [fullName, setFullName] = useState(data.account.fullName);
   const [phone, setPhone] = useState(data.account.phone);
+  const [email, setEmail] = useState(data.account.email);
   const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -241,15 +244,19 @@ function Account({ data, saving, patch }: { data: Data; saving: boolean; patch: 
   async function submit(event: FormEvent) {
     event.preventDefault(); setLocalError("");
     if (password && password !== confirm) { setLocalError("Las contraseñas nuevas no coinciden."); return; }
-    const ok = await patch({ action: "account", fullName, phone, password, currentPassword }, password ? "Datos y contraseña actualizados." : "Datos actualizados.");
+    const emailChanged = email.trim().toLowerCase() !== data.account.email.trim().toLowerCase();
+    if ((password || emailChanged) && !currentPassword) { setLocalError("Escribe tu contraseña actual para cambiar el correo o la contraseña."); return; }
+    const ok = await patch({ action: "account", fullName, phone, email, password, currentPassword }, emailChanged ? "Revisa el nuevo correo para confirmar el cambio." : password ? "Datos y contraseña actualizados." : "Datos actualizados.");
     if (ok) { setCurrentPassword(""); setPassword(""); setConfirm(""); }
   }
-  return <form className="panel owner-account" onSubmit={submit}>
+  return <div className="owner-account-grid">
+  <form className="panel owner-account" onSubmit={submit}>
     <div className="panel-header"><div><p className="eyebrow">MI CUENTA</p><h3>Datos personales y contraseña</h3><p>Correo de acceso: <strong>{data.account.email}</strong></p></div></div>
     <div className="owner-form-grid">
       <label>Nombre completo<input required value={fullName} onChange={event => setFullName(event.target.value)} maxLength={120} /></label>
       <label>Teléfono<input value={phone} onChange={event => setPhone(event.target.value)} placeholder="+504 9999-9999" maxLength={30} /></label>
     </div>
+    <label className="owner-account-email">Correo de acceso<input required type="email" value={email} onChange={event => setEmail(event.target.value)} maxLength={180} /><small>Al cambiarlo recibirás un enlace de confirmación en el nuevo correo.</small></label>
     <h4 className="owner-subtitle">Cambiar contraseña <small>(opcional)</small></h4>
     <div className="owner-form-grid three">
       <label>Contraseña actual<input type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} /></label>
@@ -258,7 +265,79 @@ function Account({ data, saving, patch }: { data: Data; saving: boolean; patch: 
     </div>
     {localError && <div className="owner-alert error">{localError}</div>}
     <div className="owner-form-actions"><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Guardar cambios"}</button></div>
-  </form>;
+  </form>
+  <SecurityPanel data={data} />
+  </div>;
+}
+
+type MfaFactor = { id: string; friendly_name?: string; factor_type: string; status: string };
+
+function SecurityPanel({ data }: { data: Data }) {
+  const [factors, setFactors] = useState<MfaFactor[]>([]);
+  const [enrollment, setEnrollment] = useState<{ id: string; qr: string; secret: string } | null>(null);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const supabase = createClientSupabase();
+
+  const loadFactors = useCallback(async () => {
+    if (!supabase) return;
+    const result = await supabase.auth.mfa.listFactors();
+    if (!result.error) setFactors((result.data?.all || []) as MfaFactor[]);
+  }, [supabase]);
+  useEffect(() => { void loadFactors(); }, [loadFactors]);
+
+  async function beginEnrollment() {
+    if (!supabase) return;
+    setBusy(true); setError(""); setMessage("");
+    const result = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName: "Gavrion" });
+    setBusy(false);
+    if (result.error || !result.data?.id || result.data.type !== "totp") { setError(result.error?.message || "No se pudo iniciar la configuración de dos pasos."); return; }
+    setEnrollment({ id: result.data.id, qr: result.data.totp.qr_code, secret: result.data.totp.secret });
+  }
+
+  async function verifyEnrollment(event: FormEvent) {
+    event.preventDefault();
+    if (!supabase || !enrollment || !/^\d{6}$/.test(code)) { setError("Escribe el código de 6 dígitos de tu aplicación."); return; }
+    setBusy(true); setError("");
+    const challenge = await supabase.auth.mfa.challenge({ factorId: enrollment.id });
+    if (challenge.error) { setBusy(false); setError(challenge.error.message); return; }
+    const verified = await supabase.auth.mfa.verify({ factorId: enrollment.id, challengeId: challenge.data.id, code });
+    setBusy(false);
+    if (verified.error) { setError(verified.error.message); return; }
+    await request("/api/owner/center", { method: "PATCH", body: JSON.stringify({ action: "security_event", eventType: "mfa_enabled" }) }).catch(() => undefined);
+    setEnrollment(null); setCode(""); setMessage("Autenticación de dos pasos activada."); await loadFactors();
+  }
+
+  async function removeFactor(factorId: string) {
+    if (!supabase || !window.confirm("¿Desactivar la autenticación de dos pasos?")) return;
+    setBusy(true); setError("");
+    const result = await supabase.auth.mfa.unenroll({ factorId });
+    setBusy(false);
+    if (result.error) { setError(result.error.message); return; }
+    await request("/api/owner/center", { method: "PATCH", body: JSON.stringify({ action: "security_event", eventType: "mfa_disabled" }) }).catch(() => undefined);
+    setMessage("Autenticación de dos pasos desactivada."); await loadFactors();
+  }
+
+  async function closeAllSessions() {
+    if (!supabase || !window.confirm("Se cerrarán todas las sesiones, incluida esta. ¿Continuar?")) return;
+    setBusy(true); setError("");
+    await request("/api/owner/center", { method: "PATCH", body: JSON.stringify({ action: "session_revoke" }) }).catch(() => undefined);
+    await supabase.auth.signOut({ scope: "global" });
+    window.location.replace("/login?session=revoked");
+  }
+
+  return <article className="panel owner-security">
+    <div className="panel-header"><div><p className="eyebrow">SEGURIDAD</p><h3>Sesiones y acceso</h3><p>Último acceso: {data.account.lastSignInAt ? new Date(data.account.lastSignInAt).toLocaleString("es-HN") : "Sin registro"}.</p></div></div>
+    <button type="button" className="secondary-button" disabled={busy} onClick={() => void closeAllSessions()}>Cerrar todas las sesiones</button>
+    <h4 className="owner-subtitle">Autenticación de dos pasos</h4>
+    {factors.filter(item => item.status === "verified").length ? <div className="owner-mfa-active"><span>✓</span><div><strong>Protección activa</strong><small>Aplicación autenticadora configurada.</small></div>{factors.filter(item => item.status === "verified").map(item => <button key={item.id} type="button" className="ghost-button" disabled={busy} onClick={() => void removeFactor(item.id)}>Desactivar</button>)}</div> : enrollment ? <form className="owner-mfa-enroll" onSubmit={verifyEnrollment}><p>Escanea el código QR con Google Authenticator, 1Password o una aplicación compatible.</p><img src={enrollment.qr} alt="Código QR para autenticación de dos pasos" /><small>Si no puedes escanearlo: <code>{enrollment.secret}</code></small><label>Código de verificación<input inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} /></label>{error && <div className="owner-alert error">{error}</div>}<button className="primary-button" disabled={busy || code.length !== 6}>{busy ? "Verificando…" : "Activar protección"}</button></form> : <><p className="owner-hint">Añade una segunda comprobación al iniciar sesión.</p><button type="button" className="secondary-button" disabled={busy} onClick={() => void beginEnrollment()}>{busy ? "Preparando…" : "Configurar aplicación"}</button></>}
+    {message && <div className="owner-alert success">{message}</div>}
+    {error && !enrollment && <div className="owner-alert error">{error}</div>}
+    <h4 className="owner-subtitle">Historial de accesos</h4>
+    {data.accessHistory.length ? <ul className="access-history">{data.accessHistory.slice(0, 8).map(item => <li key={item.id}><span className="access-event-dot" /><div><strong>{item.event_type === "login" ? "Inicio de sesión" : item.event_type === "session_revoked" ? "Sesiones cerradas" : item.event_type === "password_change" ? "Contraseña cambiada" : item.event_type === "email_change" ? "Cambio de correo" : item.event_type === "mfa_enabled" ? "2FA activado" : item.event_type === "mfa_disabled" ? "2FA desactivado" : item.event_type}</strong><small>{new Date(item.created_at).toLocaleString("es-HN")}{item.ip_address ? ` · ${item.ip_address}` : ""}</small></div></li>)}</ul> : <p className="owner-hint">Aún no hay accesos registrados. Se guardarán a partir del siguiente inicio de sesión.</p>}
+  </article>;
 }
 
 // ---------- Datos y privacidad ----------

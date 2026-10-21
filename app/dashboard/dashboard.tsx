@@ -19,7 +19,7 @@ const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últ
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
 type ChatMessage = { id: string; text: string; direction: "inbound" | "outbound"; createdAt: string };
 type Thread = { id: string; name: string; channel: string; preview: string; contactId: string; externalThreadId: string; handlingMode: "bot" | "waiting_agent" | "human"; assignedTo: string; unread: number; messages: ChatMessage[] };
-type TeamMember = { id: string; name: string; email: string; role: "owner" | "admin" | "agent" | "viewer"; active?:boolean; invitationStatus?:string; workload?:{conversations:number;tasks:number;deals:number} };
+type TeamMember = { id: string; name: string; email: string; role: "owner" | "admin" | "agent" | "viewer"; active?:boolean; invitationStatus?:string; invitedAt?: string | null; lastSeenAt?: string | null; online?: boolean; workload?:{conversations:number;tasks:number;deals:number} };
 type Property = { id: string; reference: string; title: string; property_type: string; operation: "sale" | "rent"; price: number; currency: string; city: string; zone: string | null; bedrooms: number | null; status: "available" | "reserved" | "sold" | "rented" | "inactive" };
 type PropertyInquiry = { id: string; customer_name: string; phone: string; intent: "buy" | "rent" | "sell"; property_type: string | null; city: string | null; zone: string | null; budget_max: number | null; bedrooms: number | null; notes: string | null; status: "new" | "contacted" | "qualified" | "closed" | "discarded" };
 type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" };
@@ -38,6 +38,7 @@ export default function Dashboard() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<TeamMember["role"]>("agent");
   const [inviting, setInviting] = useState(false);
+  const [reassignTargets, setReassignTargets] = useState<Record<string, string>>({});
   const [tenantId, setTenantId] = useState("");
   const [tenantLogoUrl, setTenantLogoUrl] = useState("");
   const [brandingName, setBrandingName] = useState("");
@@ -509,6 +510,13 @@ export default function Dashboard() {
     showNotice("success", assignedTo ? "Conversación asignada." : "Conversación devuelta al asistente.");
   }
 
+  async function refreshTeamMembers() {
+    const response = await fetch("/api/team", { cache: "no-store" });
+    if (!response.ok) return;
+    const result = await response.json();
+    if (Array.isArray(result)) setTeamMembers(result);
+  }
+
   async function inviteMember(event: FormEvent) {
     event.preventDefault();
     if (!inviteEmail.trim() || inviting) return;
@@ -533,12 +541,24 @@ export default function Dashboard() {
     const active = member.active === false;
     let reassignTo = "";
     const workload = (member.workload?.conversations || 0) + (member.workload?.tasks || 0) + (member.workload?.deals || 0);
-    if (!active && workload) reassignTo = window.prompt("Este integrante tiene trabajo pendiente. Escribe el ID del integrante que lo recibirá o deja vacío para conservarlo sin asignar:")?.trim() || "";
+    if (!active && workload) reassignTo = reassignTargets[member.id] || "";
+    if (!active && workload && !reassignTo) { showNotice("error", "Selecciona un integrante activo para recibir sus conversaciones, tareas y oportunidades."); return; }
     const response = await fetch("/api/team", { method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ userId:member.id, active, reassignTo:reassignTo || null }) });
     const result = await response.json();
     if (!response.ok) { showNotice("error", result.error || "No se pudo actualizar el acceso."); return; }
     setTeamMembers(current => current.map(item => item.id === member.id ? { ...item, active, invitationStatus:active ? "accepted" : "revoked" } : item));
+    await refreshTeamMembers();
     showNotice("success", active ? "Acceso reactivado." : "Integrante desactivado.");
+  }
+
+  async function reassignMember(member: TeamMember) {
+    const target = reassignTargets[member.id];
+    if (!target) { showNotice("error", "Selecciona el integrante que recibirá el trabajo."); return; }
+    const response = await fetch("/api/team", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "reassign", fromUserId: member.id, toUserId: target }) });
+    const result = await response.json();
+    if (!response.ok) { showNotice("error", result.error || "No se pudo reasignar el trabajo."); return; }
+    await refreshTeamMembers();
+    showNotice("success", `Trabajo reasignado: ${result.moved?.conversations || 0} conversaciones, ${result.moved?.tasks || 0} tareas y ${result.moved?.deals || 0} oportunidades.`);
   }
 
   async function enableNotifications() {
@@ -591,6 +611,7 @@ export default function Dashboard() {
     setLoggingOut(true);
     const supabase = createClientSupabase();
     try {
+      void fetch("/api/auth/access-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventType: "logout" }) });
       await supabase?.auth.signOut({ scope: "local" });
     } finally {
       window.location.replace("/login?logged_out=1");
@@ -718,7 +739,7 @@ export default function Dashboard() {
 
       {view === "equipo" && isClientAdmin && <section className="view active">
         <div className="section-heading"><div><h2>Equipo y permisos</h2><p>Gestiona quién accede al CRM y qué conversaciones atiende.</p></div></div>
-        <div className="team-workload-grid">{teamMembers.map(member=><article className={`panel member-workload ${member.active===false?"member-inactive":""}`} key={`work-${member.id}`}><div><strong>{member.name}</strong><span className={`status ${member.invitationStatus==="pending"?"lead":"client"}`}>{member.invitationStatus==="pending"?"Invitación pendiente":member.active===false?"Sin acceso":"Activo"}</span></div><p><b>{member.workload?.conversations||0}</b> conversaciones · <b>{member.workload?.tasks||0}</b> tareas · <b>{member.workload?.deals||0}</b> oportunidades</p>{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&<button className={member.active===false?"ghost-button":"danger-button"} onClick={()=>void toggleMember(member)}>{member.active===false?"Reactivar acceso":"Desactivar y reasignar"}</button>}</article>)}</div>
+        <div className="team-workload-grid">{teamMembers.map(member=>{const workload=(member.workload?.conversations||0)+(member.workload?.tasks||0)+(member.workload?.deals||0);const targets=teamMembers.filter(candidate=>candidate.id!==member.id&&candidate.active!==false);return <article className={`panel member-workload ${member.active===false?"member-inactive":""}`} key={`work-${member.id}`}><div><strong>{member.name}</strong><span className={`status ${member.invitationStatus==="pending"?"lead":member.online?"online":"client"}`}>{member.invitationStatus==="pending"?"Invitación pendiente":member.active===false?"Sin acceso":member.online?"Conectado":"Activo"}</span></div><p><b>{member.workload?.conversations||0}</b> conversaciones · <b>{member.workload?.tasks||0}</b> tareas · <b>{member.workload?.deals||0}</b> oportunidades</p>{member.lastSeenAt&&<small className="member-last-seen">Último acceso: {new Date(member.lastSeenAt).toLocaleString("es-HN")}</small>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&member.active!==false&&<div className="member-reassign"><select className="select" value={reassignTargets[member.id]||""} onChange={event=>setReassignTargets(current=>({...current,[member.id]:event.target.value}))}><option value="">Reasignar trabajo…</option>{targets.map(target=><option key={target.id} value={target.id}>{target.name}</option>)}</select><button type="button" className="ghost-button" disabled={!workload} onClick={()=>void reassignMember(member)}>Reasignar</button></div>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&<button className={member.active===false?"ghost-button":"danger-button"} onClick={()=>void toggleMember(member)}>{member.active===false?"Reactivar acceso":workload?"Desactivar y reasignar":"Desactivar acceso"}</button>}</article>})}</div>
         {["owner","admin"].includes(currentRole) && <form className="team-invite panel" onSubmit={inviteMember}><label>Correo del integrante<input required type="email" value={inviteEmail} onChange={event=>setInviteEmail(event.target.value)} placeholder="asesor@empresa.com" /></label><label>Rol<select className="select" value={inviteRole} onChange={event=>setInviteRole(event.target.value as TeamMember["role"])}><option value="admin">Administrador</option><option value="agent">Agente</option><option value="viewer">Consulta</option></select></label><button className="primary-button" disabled={inviting}>{inviting?"Enviando…":"Invitar integrante"}</button></form>}
         <article className="panel table-panel team-table"><div className="panel-header"><div><h3>Integrantes</h3><p>{teamMembers.length} usuario{teamMembers.length===1?"":"s"} en esta empresa</p></div></div><div className="table-scroll"><table><thead><tr><th>Integrante</th><th>Correo</th><th>Rol</th></tr></thead><tbody>{teamMembers.map(member=><tr key={member.id}><td><div className="contact-cell"><span className="avatar">{member.name.charAt(0).toUpperCase()}</span><span><strong>{member.name}</strong>{member.id===userId&&<small>Tu cuenta</small>}</span></div></td><td>{member.email}</td><td>{member.role==="owner"?<span className="status client">Propietario</span>:<select className="select team-role" value={member.role} disabled={!(["owner","admin"].includes(currentRole))} onChange={event=>changeMemberRole(member,event.target.value as TeamMember["role"])}><option value="admin">Administrador</option><option value="agent">Agente</option><option value="viewer">Consulta</option></select>}</td></tr>)}</tbody></table></div></article>
       </section>}
