@@ -35,6 +35,9 @@ export default function LoginPage() {
     const sessionReason=new URLSearchParams(window.location.search).get("session");
     if(sessionReason==="idle")setMessage({type:"error",text:"La sesión se cerró por inactividad. Ingresa nuevamente."});
     if(sessionReason==="maximum")setMessage({type:"error",text:"La sesión alcanzó su duración máxima. Ingresa nuevamente."});
+    if(sessionReason==="revoked")setMessage({type:"success",text:"Se cerraron todas las sesiones activas. Ingresa nuevamente."});
+    const accountStatus=new URLSearchParams(window.location.search).get("account");
+    if(accountStatus&&accountStatus!=="unknown")setMessage({type:"error",text:accountStatus==="suspended"?"El acceso de esta empresa está suspendido. Comunícate con Gavrion.":accountStatus==="archived"?"Esta empresa está archivada y no admite accesos.":"La implementación todavía no ha sido habilitada para el cliente."});
     return () => window.removeEventListener("pageshow", clearPassword);
   }, []);
 
@@ -63,9 +66,16 @@ export default function LoginPage() {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
         setPassword("");
+        // El historial se registra en el servidor, asociado a todas las empresas
+        // activas de la cuenta. Si la tabla aún no existe, el acceso no se bloquea.
+        void fetch("/api/auth/access-log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eventType: "login" }) });
         const accessResponse = await fetch("/api/admin/access", { cache: "no-store" });
         const access = accessResponse.ok ? await accessResponse.json() : { isPlatformAdmin: false };
-        window.location.replace(access.isPlatformAdmin ? "/admin" : "/dashboard");
+        if(access.isPlatformStaff){window.location.replace("/admin");return;}
+        const accountResponse=await fetch("/api/auth/account-access",{cache:"no-store"});
+        const account=accountResponse.ok?await accountResponse.json():{allowed:false,status:"unknown"};
+        if(!account.allowed){await supabase.auth.signOut({scope:"local"});window.location.replace(`/login?account=${encodeURIComponent(account.status||"unavailable")}`);return;}
+        window.location.replace("/dashboard");
       } else {
         const { data, error } = await supabase.auth.signUp({ email: email.trim(), password, options: { data: { full_name: fullName.trim(), company_name: company.trim() } } });
         if (error) throw error;
