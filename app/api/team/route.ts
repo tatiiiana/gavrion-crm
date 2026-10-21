@@ -6,7 +6,7 @@ async function authorize(requireAdmin = true) {
   const server = await createServerSupabase();
   const { data: auth } = await server.auth.getUser();
   if (!auth.user) return null;
-  const { data: membership } = await server.from("memberships").select("tenant_id, role").eq("user_id", auth.user.id).limit(1).maybeSingle();
+  const { data: membership } = await server.from("memberships").select("tenant_id, role").eq("user_id", auth.user.id).eq("active", true).limit(1).maybeSingle();
   if (!membership || (requireAdmin && !["owner", "admin"].includes(membership.role))) return null;
   return { user: auth.user, membership };
 }
@@ -21,15 +21,21 @@ export async function GET() {
   const { data: users, error: usersError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (usersError) return NextResponse.json({ error: usersError.message }, { status: 400 });
   const userMap = new Map(users.users.map(user => [user.id, user]));
-  const [{ data: conversations }, { data: tasks }, { data: deals }] = await Promise.all([
+  const [{ data: conversations }, { data: tasks }, { data: deals }, { data: accessLogs }] = await Promise.all([
     admin.from("conversations").select("assigned_to").eq("tenant_id", tenantId).in("status", ["open", "pending"]),
     admin.from("tasks").select("assigned_to").eq("tenant_id", tenantId).is("completed_at", null),
-    admin.from("deals").select("owner_id").eq("tenant_id", tenantId).not("stage", "eq", "won")
+    admin.from("deals").select("owner_id").eq("tenant_id", tenantId).not("stage", "eq", "won"),
+    admin.from("account_access_logs").select("user_id,created_at").eq("tenant_id", tenantId).in("event_type", ["login", "heartbeat"]).order("created_at", { ascending: false }).limit(1000)
   ]);
+  const lastAccess = new Map<string, string>();
+  for (const row of accessLogs || []) if (!lastAccess.has(row.user_id)) lastAccess.set(row.user_id, row.created_at);
   return NextResponse.json((memberships || []).map(member => {
     const user = userMap.get(member.user_id);
+    const lastSeenAt = lastAccess.get(member.user_id) || user?.last_sign_in_at || null;
+    const online = Boolean(lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < 15 * 60 * 1000);
     return { id: member.user_id, email: user?.email || "Sin correo", name: String(user?.user_metadata?.full_name || user?.email?.split("@")[0] || "Usuario"), role: member.role,
       active: member.active !== false, invitationStatus: member.invitation_status || (user?.email_confirmed_at ? "accepted" : "pending"), invitedAt: member.invited_at,
+      lastSeenAt, online,
       workload: { conversations:(conversations||[]).filter(x=>x.assigned_to===member.user_id).length, tasks:(tasks||[]).filter(x=>x.assigned_to===member.user_id).length, deals:(deals||[]).filter(x=>x.owner_id===member.user_id).length }
     };
   }));
@@ -64,9 +70,30 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const access = await authorize();
   if (!access) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
-  const { userId, role, active, reassignTo } = await request.json();
+  const body = await request.json().catch(() => ({}));
+  const { userId, role, active, reassignTo } = body;
+  if (body.action === "reassign") {
+    const sourceUserId = String(body.fromUserId || "");
+    const targetUserId = String(body.toUserId || "");
+    if (!sourceUserId || !targetUserId || sourceUserId === targetUserId) return NextResponse.json({ error: "Selecciona dos integrantes distintos." }, { status: 400 });
+    const admin = createAdminSupabase();
+    const { data: target } = await admin.from("memberships").select("user_id").eq("tenant_id", access.membership.tenant_id).eq("user_id", targetUserId).eq("active", true).maybeSingle();
+    if (!target) return NextResponse.json({ error: "El integrante receptor no está activo en esta empresa." }, { status: 400 });
+    const [conversations, tasks, deals] = await Promise.all([
+      admin.from("conversations").update({ assigned_to: targetUserId }).eq("tenant_id", access.membership.tenant_id).eq("assigned_to", sourceUserId).select("id"),
+      admin.from("tasks").update({ assigned_to: targetUserId }).eq("tenant_id", access.membership.tenant_id).eq("assigned_to", sourceUserId).is("completed_at", null).select("id"),
+      admin.from("deals").update({ owner_id: targetUserId }).eq("tenant_id", access.membership.tenant_id).eq("owner_id", sourceUserId).not("stage", "eq", "won").select("id")
+    ]);
+    const error = conversations.error || tasks.error || deals.error;
+    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    return NextResponse.json({ ok: true, moved: { conversations: conversations.data?.length || 0, tasks: tasks.data?.length || 0, deals: deals.data?.length || 0 } });
+  }
   if (!userId || (role !== undefined && !["admin", "agent", "viewer"].includes(role)) || (active !== undefined && typeof active !== "boolean")) return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
   const admin = createAdminSupabase();
+  if (active === false && reassignTo) {
+    const { data: target } = await admin.from("memberships").select("user_id").eq("tenant_id", access.membership.tenant_id).eq("user_id", String(reassignTo)).eq("active", true).maybeSingle();
+    if (!target) return NextResponse.json({ error: "El integrante receptor no está activo en esta empresa." }, { status: 400 });
+  }
   if (active === false && reassignTo) {
     await Promise.all([
       admin.from("conversations").update({assigned_to:reassignTo}).eq("tenant_id",access.membership.tenant_id).eq("assigned_to",userId),

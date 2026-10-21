@@ -228,23 +228,25 @@ export async function GET(request: Request) {
 
   // Vista completa del centro de control.
   await runUnansweredCheck(ctx);
-  const [health, notificationsResult, preferencesResult, automationErrorsResult, requestsResult] = await Promise.all([
+  const [health, notificationsResult, preferencesResult, automationErrorsResult, requestsResult, accessHistoryResult] = await Promise.all([
     buildHealth(ctx),
     ctx.admin.from("tenant_notifications").select("id,type,title,body,entity_type,entity_id,read_at,created_at").eq("tenant_id", ctx.tenantId).eq("user_id", ctx.user.id).order("created_at", { ascending: false }).limit(100),
     ctx.admin.from("notification_preferences").select("in_app,browser,email_digest,muted_types").eq("user_id", ctx.user.id).maybeSingle(),
     ctx.admin.from("automation_runs").select("id,flow_id,error_message,created_at").eq("tenant_id", ctx.tenantId).eq("status", "error").gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString()).order("created_at", { ascending: false }).limit(10),
-    ctx.admin.from("tenant_data_requests").select("id,request_type,reason,status,created_at,resolved_at").eq("tenant_id", ctx.tenantId).order("created_at", { ascending: false }).limit(10)
+    ctx.admin.from("tenant_data_requests").select("id,request_type,reason,status,created_at,resolved_at").eq("tenant_id", ctx.tenantId).order("created_at", { ascending: false }).limit(10),
+    ctx.admin.from("account_access_logs").select("id,event_type,ip_address,user_agent,created_at").eq("tenant_id", ctx.tenantId).eq("user_id", ctx.user.id).neq("event_type", "heartbeat").order("created_at", { ascending: false }).limit(20)
   ]);
   return NextResponse.json({
     role: ctx.role,
-    account: { email: ctx.user.email || "", fullName: String(ctx.user.user_metadata?.full_name || ""), phone: String(ctx.user.user_metadata?.phone || "") },
+    account: { email: ctx.user.email || "", fullName: String(ctx.user.user_metadata?.full_name || ""), phone: String(ctx.user.user_metadata?.phone || ""), lastSignInAt: ctx.user.last_sign_in_at || null },
     health: health.items,
     site: health.site,
     notifications: notificationsResult.data || [],
     notificationTypes: notificationTypes.map(type => ({ type, label: notificationTypeLabels[type] })),
     preferences: { in_app: true, browser: true, email_digest: false, muted_types: [], ...(preferencesResult.data || {}) },
     automationErrors: automationErrorsResult.data || [],
-    dataRequests: requestsResult.data || []
+    dataRequests: requestsResult.data || [],
+    accessHistory: accessHistoryResult.data || []
   });
 }
 
@@ -274,12 +276,15 @@ export async function PATCH(request: Request) {
   if (body.action === "account") {
     const fullName = String(body.fullName || "").trim().slice(0, 120);
     const phone = String(body.phone || "").trim().slice(0, 30);
+    const email = String(body.email || ctx.user.email || "").trim().toLowerCase();
+    const emailChanged = email !== String(ctx.user.email || "").trim().toLowerCase();
     const password = String(body.password || "");
     const currentPassword = String(body.currentPassword || "");
     if (!fullName) return NextResponse.json({ error: "Escribe tu nombre." }, { status: 400 });
+    if (!/^\S+@\S+\.\S+$/.test(email)) return NextResponse.json({ error: "El correo no es válido." }, { status: 400 });
     if (phone && !/^[+\d\s()-]{7,30}$/.test(phone)) return NextResponse.json({ error: "El teléfono no es válido." }, { status: 400 });
-    if (password) {
-      if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return NextResponse.json({ error: "La nueva contraseña debe tener al menos 8 caracteres, con letras y números." }, { status: 400 });
+    if (password || emailChanged) {
+      if (password && (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))) return NextResponse.json({ error: "La nueva contraseña debe tener al menos 8 caracteres, con letras y números." }, { status: 400 });
       if (!currentPassword) return NextResponse.json({ error: "Escribe tu contraseña actual para cambiarla." }, { status: 400 });
       const url = process.env.NEXT_PUBLIC_SUPABASE_URL; const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
       if (!url || !anon || !ctx.user.email) return NextResponse.json({ error: "No se pudo verificar la contraseña actual." }, { status: 503 });
@@ -289,10 +294,27 @@ export async function PATCH(request: Request) {
       if (verifyError) return NextResponse.json({ error: "La contraseña actual no es correcta." }, { status: 400 });
       await verifier.auth.signOut({ scope: "local" }).catch(() => undefined);
     }
-    const { error } = await ctx.supabase.auth.updateUser({ ...(password ? { password } : {}), data: { full_name: fullName, phone } });
+    const { error } = await ctx.supabase.auth.updateUser({ ...(password ? { password } : {}), ...(emailChanged ? { email } : {}), data: { full_name: fullName, phone } });
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-    await ctx.admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.user.id, action: "update", entity_type: "account", entity_id: ctx.user.id, changes: { after: { full_name: fullName, phone, password_changed: Boolean(password) } } });
-    return NextResponse.json({ ok: true, passwordChanged: Boolean(password) });
+    await ctx.admin.from("audit_logs").insert({ tenant_id: ctx.tenantId, actor_user_id: ctx.user.id, action: "update", entity_type: "account", entity_id: ctx.user.id, changes: { after: { full_name: fullName, phone, email_changed: emailChanged, password_changed: Boolean(password) } } });
+    if (password || emailChanged) {
+      const events = [];
+      if (password) events.push({ tenant_id: ctx.tenantId, user_id: ctx.user.id, event_type: "password_change" });
+      if (emailChanged) events.push({ tenant_id: ctx.tenantId, user_id: ctx.user.id, event_type: "email_change" });
+      await ctx.admin.from("account_access_logs").insert(events);
+    }
+    return NextResponse.json({ ok: true, passwordChanged: Boolean(password), emailChangeRequested: emailChanged });
+  }
+
+  if (body.action === "session_revoke") {
+    await ctx.admin.from("account_access_logs").insert({ tenant_id: ctx.tenantId, user_id: ctx.user.id, event_type: "session_revoked" });
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "security_event" && ["mfa_enabled", "mfa_disabled"].includes(String(body.eventType))) {
+    const eventType = String(body.eventType);
+    await ctx.admin.from("account_access_logs").insert({ tenant_id: ctx.tenantId, user_id: ctx.user.id, event_type: eventType });
+    return NextResponse.json({ ok: true });
   }
 
   if (body.action === "cancel_request") {
