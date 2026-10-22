@@ -145,6 +145,39 @@ async function buildHealth(ctx: Ctx): Promise<{ items: HealthItem[]; site: Recor
   return { items, site };
 }
 
+async function buildAnalytics(ctx: Ctx) {
+  const now = Date.now();
+  const from = new Date(now - 30 * 86400000).toISOString();
+  const [forms, conversations, contacts, deals, requests, site] = await Promise.all([
+    ctx.admin.from("site_form_submissions").select("created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("conversations").select("created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("contacts").select("created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("deals").select("created_at,stage").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("tenant_data_requests").select("created_at,request_type").eq("tenant_id", ctx.tenantId).gte("created_at", from).eq("request_type", "account_closure").limit(100),
+    ctx.admin.from("site_projects").select("status,published_url,deployment_status").eq("tenant_id", ctx.tenantId).is("archived_at", null).maybeSingle()
+  ]);
+  const formRows = forms.data || []; const conversationRows = conversations.data || []; const contactRows = contacts.data || []; const dealRows = deals.data || [];
+  const growth = contactRows.length + dealRows.length;
+  const trend = Array.from({ length: 5 }, (_, index) => {
+    const start = now - (5 - index) * 7 * 86400000;
+    const end = start + 7 * 86400000;
+    const inRange = (value: string | null | undefined) => value ? new Date(value).getTime() >= start && new Date(value).getTime() < end : false;
+    return {
+      label: new Date(start).toLocaleDateString("es-HN", { day: "2-digit", month: "short" }).replace(".", ""),
+      website: formRows.filter(row => inRange(row.created_at)).length,
+      crm: conversationRows.filter(row => inRange(row.created_at)).length,
+      growth: contactRows.filter(row => inRange(row.created_at)).length + dealRows.filter(row => inRange(row.created_at)).length
+    };
+  });
+  const published = site.data?.status === "published" || (site.data?.deployment_status === "ready" && Boolean(site.data?.published_url));
+  return {
+    totals: { website: formRows.length, conversations: conversationRows.length, contacts: contactRows.length, opportunities: dealRows.length, growth, cancellations: (requests.data || []).length },
+    trend,
+    siteStatus: published ? "published" : "unpublished",
+    crmStatus: conversationRows.length || contactRows.length || dealRows.length ? "active" : "inactive"
+  };
+}
+
 // ---------- GET ----------
 
 export async function GET(request: Request) {
@@ -228,11 +261,11 @@ export async function GET(request: Request) {
 
   // Vista completa del centro de control.
   await runUnansweredCheck(ctx);
-  const [health, notificationsResult, preferencesResult, automationErrorsResult, requestsResult, accessHistoryResult] = await Promise.all([
+  const [health, analytics, notificationsResult, preferencesResult, requestsResult, accessHistoryResult] = await Promise.all([
     buildHealth(ctx),
+    buildAnalytics(ctx),
     ctx.admin.from("tenant_notifications").select("id,type,title,body,entity_type,entity_id,read_at,created_at").eq("tenant_id", ctx.tenantId).eq("user_id", ctx.user.id).order("created_at", { ascending: false }).limit(100),
     ctx.admin.from("notification_preferences").select("in_app,browser,email_digest,muted_types").eq("user_id", ctx.user.id).maybeSingle(),
-    ctx.admin.from("automation_runs").select("id,flow_id,error_message,created_at").eq("tenant_id", ctx.tenantId).eq("status", "error").gte("created_at", new Date(Date.now() - 14 * 86400000).toISOString()).order("created_at", { ascending: false }).limit(10),
     ctx.admin.from("tenant_data_requests").select("id,request_type,reason,status,created_at,resolved_at").eq("tenant_id", ctx.tenantId).order("created_at", { ascending: false }).limit(10),
     ctx.admin.from("account_access_logs").select("id,event_type,ip_address,user_agent,created_at").eq("tenant_id", ctx.tenantId).eq("user_id", ctx.user.id).neq("event_type", "heartbeat").order("created_at", { ascending: false }).limit(20)
   ]);
@@ -241,10 +274,10 @@ export async function GET(request: Request) {
     account: { email: ctx.user.email || "", fullName: String(ctx.user.user_metadata?.full_name || ""), phone: String(ctx.user.user_metadata?.phone || ""), lastSignInAt: ctx.user.last_sign_in_at || null },
     health: health.items,
     site: health.site,
+    analytics,
     notifications: notificationsResult.data || [],
     notificationTypes: notificationTypes.map(type => ({ type, label: notificationTypeLabels[type] })),
     preferences: { in_app: true, browser: true, email_digest: false, muted_types: [], ...(preferencesResult.data || {}) },
-    automationErrors: automationErrorsResult.data || [],
     dataRequests: requestsResult.data || [],
     accessHistory: accessHistoryResult.data || []
   });
