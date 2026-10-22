@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./skydash-theme.css";
+import "./design-system.css";
 import SessionGuard from "./session-guard";
 
 export const metadata: Metadata = {
