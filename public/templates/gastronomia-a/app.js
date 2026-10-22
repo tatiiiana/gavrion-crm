@@ -139,3 +139,17 @@ async function scanFrame(){
 function stopScanner(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=undefined; } q('#scannerVideo').classList.remove('active'); q('.scanner-frame').classList.remove('scanning'); }
 function applyLayout(){const layout=window.GAVRION_SITE?.layout?.sections||[];const root=document.querySelector('main');if(!root)return;layout.forEach((item)=>{const node=document.getElementById(item.id)||(item.id==='proof'?document.querySelector('.proof'):item.id==='contacto'?document.querySelector('footer'):null);if(!node)return;node.hidden=item.visible===false;if(item.visible!==false)root.append(node)})}
 applyLayout();
+function initVipMotion(){
+  let observer;
+  const decorate=()=>{
+    const staticNodes=qa('.intro,.menu-section,.operations,.proof,footer,.site-details');
+    staticNodes.forEach((node,index)=>{if(!node||node.dataset.vipReady)return;node.dataset.vipReady='1';node.classList.add('vip-reveal','vip-reveal-delay-'+((index%3)+1));});
+    qa('.dish,.proof-grid>div,.ticket').forEach((node,index)=>{if(!node.dataset.vipReady){node.dataset.vipReady='1';node.classList.add('vip-reveal','vip-reveal-delay-'+((index%3)+1));}});
+  };
+  decorate();
+  if('IntersectionObserver' in window){observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('is-visible');observer.unobserve(entry.target);}}),{threshold:.12,rootMargin:'0px 0px -8%'});}
+  const attach=()=>{decorate();qa('.vip-reveal:not([data-vip-observed])').forEach(node=>{node.dataset.vipObserved='1';if(observer)observer.observe(node);else node.classList.add('is-visible');});};
+  attach();
+  if('MutationObserver' in window){new MutationObserver(attach).observe(q('.menu-grid'),{childList:true});}
+}
+initVipMotion();

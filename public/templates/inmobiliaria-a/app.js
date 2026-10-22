@@ -10,3 +10,17 @@ async function loadLiveListings(){const base=String(config.integrations?.crmBase
 void loadLiveListings();
 function applyLayout(){const layout=config.layout?.sections||[];const root=document.querySelector('main');if(!root)return;layout.forEach((item)=>{const node=document.getElementById(item.id)|| (item.id==='proof'?document.querySelector('.proof'):item.id==='contacto'?document.querySelector('footer'):null);if(!node)return;node.hidden=item.visible===false;if(item.visible!==false)root.append(node)})}
 applyLayout();
+function initVipMotion(){
+  let observer;
+  const decorate=()=>{
+    const staticNodes=qa('.intro,.properties,.proof,footer');
+    staticNodes.forEach((node,index)=>{if(!node.dataset.vipReady){node.dataset.vipReady='1';node.classList.add('vip-reveal','vip-reveal-delay-'+((index%3)+1));}});
+    qa('.property-card').forEach((node,index)=>{if(!node.dataset.vipReady){node.dataset.vipReady='1';node.classList.add('vip-reveal','vip-reveal-delay-'+((index%3)+1));}});
+  };
+  decorate();
+  if('IntersectionObserver' in window){observer=new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){entry.target.classList.add('is-visible');observer.unobserve(entry.target);}}),{threshold:.12,rootMargin:'0px 0px -8%'});}
+  const attach=()=>{decorate();qa('.vip-reveal:not([data-vip-observed])').forEach(node=>{node.dataset.vipObserved='1';if(observer)observer.observe(node);else node.classList.add('is-visible');});};
+  attach();
+  if('MutationObserver' in window){new MutationObserver(attach).observe(q('#propertyGrid'),{childList:true});}
+}
+initVipMotion();
