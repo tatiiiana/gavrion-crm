@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { downloadCsv } from "./export-utils";
 
 type Log = { id: number; actor_user_id: string | null; action: string; entity_type: string; entity_id: string | null; changes: unknown; created_at: string };
 type Member = { id: string; name: string; email: string };
@@ -25,7 +26,8 @@ export function AuditView() {
 
   function update(key: keyof typeof filters, value: string) { setFilters(current => ({ ...current, [key]: value })); }
   const hasFilters = Object.values(filters).some(Boolean);
-  return <section className="view active"><div className="section-heading"><div><h2>Auditoría</h2><p>Registro de cambios realizados en esta empresa.</p></div></div>
+  function exportAudit(){downloadCsv("auditoria",logs,[{key:"created_at",label:"Fecha",value:log=>new Date(log.created_at).toLocaleString("es-HN")},{key:"actor",label:"Usuario",value:log=>members.find(member=>member.id===log.actor_user_id)?.name||log.actor_user_id||"Sistema"},{key:"action",label:"Acción",value:log=>actions[log.action]||log.action},{key:"entity",label:"Área",value:log=>entities[log.entity_type]||log.entity_type},{key:"record",label:"Registro",value:log=>log.entity_id||"—"},{key:"changes",label:"Cambios",value:log=>JSON.stringify(log.changes)}]);}
+  return <section className="view active"><div className="section-heading"><div><h2>Auditoría</h2><p>Registro de cambios realizados en esta empresa.</p></div><button className="secondary-button" onClick={exportAudit}>Descargar CSV</button></div>
     <article className="panel audit-filter-panel"><div className="audit-filters">
       <label>Usuario<select className="select" value={filters.actor} onChange={event => update("actor", event.target.value)}><option value="">Todos los usuarios</option>{members.map(member => <option key={member.id} value={member.id}>{member.name} · {member.email}</option>)}</select></label>
       <label>Desde<input type="date" value={filters.from} onChange={event => update("from", event.target.value)} /></label><label>Hasta<input type="date" value={filters.to} onChange={event => update("to", event.target.value)} /></label>

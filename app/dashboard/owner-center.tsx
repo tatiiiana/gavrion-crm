@@ -13,15 +13,20 @@ type Data = {
   account: { email: string; fullName: string; phone: string; lastSignInAt: string | null };
   health: HealthItem[];
   site: { published_url?: string | null } | null;
+  analytics: {
+    totals: { website: number; conversations: number; contacts: number; opportunities: number; growth: number; cancellations: number };
+    trend: Array<{ label: string; website: number; crm: number; growth: number }>;
+    siteStatus: string;
+    crmStatus: string;
+  };
   notifications: OwnerNotification[];
   notificationTypes: Array<{ type: string; label: string }>;
   preferences: Preferences;
-  automationErrors: Array<{ id: string; error_message: string | null; created_at: string }>;
   dataRequests: DataRequest[];
   accessHistory: Array<{ id: number; event_type: string; ip_address: string | null; user_agent: string | null; created_at: string }>;
 };
 type ActivityRow = { id: number; action: string; entity_type: string; created_at: string; by_me: boolean; by_system: boolean; name: string; changedFields: string[] };
-type Section = "resumen" | "alertas" | "actividad" | "cuenta" | "datos";
+type Section = "resumen" | "alertas" | "actividad" | "datos";
 
 const statusLabels: Record<string, string> = { connected: "Conectado", active: "Activo", inactive: "Inactivo", installed: "Instalado", pending: "Pendiente", published: "Publicado", unpublished: "Sin publicar", verified: "Verificado", error: "Error" };
 const goodStatuses = ["connected", "active", "installed", "published", "verified"];
@@ -78,8 +83,7 @@ export function OwnerCenter({ onNavigateSettings, onOpenNotification, onChanged 
 
   if (!data && !error) return <article className="panel"><p>Cargando centro de control…</p></article>;
   const unread = data?.notifications.filter(item => !item.read_at).length || 0;
-  const issues = data?.health.filter(item => item.status === "error").length || 0;
-  const tabs: Array<[Section, string, number]> = [["resumen", "Resumen", issues], ["alertas", "Notificaciones", unread], ["actividad", "Actividad", 0], ["cuenta", "Mi cuenta", 0], ["datos", "Datos y privacidad", 0]];
+  const tabs: Array<[Section, string, number]> = [["resumen", "Resumen", 0], ["alertas", "Notificaciones", unread], ["actividad", "Auditoría", 0], ["datos", "Solicitudes", 0]];
 
   return <section className="owner-center">
     {error && <div className="owner-alert error" role="alert">{error}</div>}
@@ -90,33 +94,27 @@ export function OwnerCenter({ onNavigateSettings, onOpenNotification, onChanged 
     {data && section === "resumen" && <Summary data={data} unread={unread} onNavigateSettings={onNavigateSettings} onSeeAlerts={() => setSection("alertas")} onOpen={open} />}
     {data && section === "alertas" && <Notifications data={data} saving={saving} patch={patch} onOpen={open} />}
     {section === "actividad" && <Activity />}
-    {data && section === "cuenta" && <Account data={data} saving={saving} patch={patch} />}
     {data && section === "datos" && <DataControls data={data} onError={setError} onSuccess={setSuccess} reload={load} />}
   </section>;
 }
 
-// ---------- Resumen: salud de integraciones + últimas alertas ----------
+// ---------- Resumen: estado y evolución del sitio y CRM ----------
 
-function Summary({ data, unread, onNavigateSettings, onSeeAlerts, onOpen }: { data: Data; unread: number; onNavigateSettings?: (tab: string) => void; onSeeAlerts: () => void; onOpen: (item: OwnerNotification) => void }) {
-  const healthy = data.health.filter(item => goodStatuses.includes(item.status)).length;
-  return <div className="owner-center-grid">
-    <article className="panel owner-health">
-      <div className="panel-header"><div><p className="eyebrow">SALUD DE INTEGRACIONES</p><h3>Servicios de tu empresa</h3><p>{healthy} de {data.health.length} funcionando correctamente.</p></div></div>
-      <ul className="health-list">
-        {data.health.map(item => <li key={item.key} className="health-row">
-          <span className={`health-dot ${item.status}`} aria-hidden="true" />
-          <div><strong>{item.label}</strong><small title={item.detail}>{item.detail}</small></div>
-          <b className={`health-badge ${item.status}`}>{statusLabels[item.status] || item.status}</b>
-          {item.settingsTab && onNavigateSettings && !goodStatuses.includes(item.status) ? <button type="button" className="ghost-button" onClick={() => onNavigateSettings(item.settingsTab!)}>Revisar</button> : <span />}
-        </li>)}
-      </ul>
-      {data.site?.published_url && <a className="secondary-button owner-site-link" href={data.site.published_url} target="_blank" rel="noreferrer">Abrir sitio publicado ↗</a>}
-    </article>
-    <article className="panel">
-      <div className="panel-header"><div><p className="eyebrow">CENTRO DE NOTIFICACIONES</p><h3>Alertas recientes</h3><p>{unread ? `${unread} sin leer` : "Estás al día."}</p></div><button type="button" className="ghost-button" onClick={onSeeAlerts}>Ver todas</button></div>
-      <NotificationList items={data.notifications.slice(0, 6)} onOpen={onOpen} />
-      {data.automationErrors.length > 0 && <div className="automation-errors"><strong>Automatizaciones con error (últimos 14 días)</strong>{data.automationErrors.slice(0, 3).map(item => <p key={item.id}>{item.error_message || "Error sin detalle"} · {timeAgo(item.created_at)}</p>)}</div>}
-    </article>
+function Summary({ data }: { data: Data; unread: number; onNavigateSettings?: (tab: string) => void; onSeeAlerts: () => void; onOpen: (item: OwnerNotification) => void }) {
+  const analytics = data.analytics;
+  const max = Math.max(...analytics.trend.flatMap(item => [item.website, item.crm, item.growth]), 1);
+  const totals = [
+    ["Solicitudes del sitio", analytics.totals.website, "website"],
+    ["Conversaciones CRM", analytics.totals.conversations, "crm"],
+    ["Crecimiento", analytics.totals.growth, "growth"],
+    ["Bajas solicitadas", analytics.totals.cancellations, "cancellations"]
+  ] as const;
+  return <div className="owner-summary">
+    <div className="owner-summary-metrics">{totals.map(([label, value, tone]) => <article className={`panel owner-summary-metric ${tone}`} key={label}><span>{label}</span><strong>{value.toLocaleString("es-HN")}</strong><small>Últimos 30 días</small></article>)}</div>
+    <div className="owner-center-grid">
+      <article className="panel owner-analytics-chart"><div className="panel-header"><div><p className="eyebrow">EVOLUCIÓN</p><h3>Sitio web, CRM y crecimiento</h3><p>Actividad acumulada por semana.</p></div></div><div className="owner-chart-legend"><span><i className="website" />Sitio web</span><span><i className="crm" />CRM</span><span><i className="growth" />Crecimiento</span></div><div className="owner-bar-chart">{analytics.trend.map(item => <div className="owner-bar-group" key={item.label}><div className="owner-bars"><span className="website" style={{ height: `${Math.max(item.website ? 8 : 2, item.website / max * 100)}%` }} title={`${item.website} solicitudes del sitio`} /><span className="crm" style={{ height: `${Math.max(item.crm ? 8 : 2, item.crm / max * 100)}%` }} title={`${item.crm} conversaciones`} /><span className="growth" style={{ height: `${Math.max(item.growth ? 8 : 2, item.growth / max * 100)}%` }} title={`${item.growth} acciones de crecimiento`} /></div><small>{item.label}</small></div>)}</div></article>
+      <article className="panel owner-summary-status"><div className="panel-header"><div><p className="eyebrow">ESTADO OPERATIVO</p><h3>Tu sitio y CRM</h3><p>Resumen rápido para tomar decisiones.</p></div></div><div className="owner-status-card"><span className={`health-dot ${data.analytics.siteStatus}`} /><div><strong>Sitio web</strong><small>{data.analytics.siteStatus === "published" ? "Publicado y disponible" : "Pendiente de publicación"}</small></div><b>{data.analytics.siteStatus === "published" ? "Activo" : "Pendiente"}</b></div><div className="owner-status-card"><span className={`health-dot ${data.analytics.crmStatus}`} /><div><strong>CRM</strong><small>{data.analytics.crmStatus === "active" ? "Operando con datos reales" : "Sin actividad reciente"}</small></div><b>{data.analytics.crmStatus === "active" ? "Activo" : "Pendiente"}</b></div></article>
+    </div>
   </div>;
 }
 
@@ -209,7 +207,7 @@ function Activity() {
   const hasFilters = Boolean(filters.from || filters.to || filters.action || filters.entity || filters.mine);
 
   return <article className="panel">
-    <div className="panel-header"><div><p className="eyebrow">ACTIVIDAD RECIENTE</p><h3>Auditoría de la empresa</h3><p>{total} registro{total === 1 ? "" : "s"}{hasFilters ? " con los filtros actuales" : ""}.</p></div><a className="secondary-button" href={`/api/owner/center?${query({ export: "activity" })}`}>Exportar CSV</a></div>
+    <div className="panel-header"><div><p className="eyebrow">ACTIVIDAD RECIENTE</p><h3>Auditoría de la empresa</h3><p>{total} registro{total === 1 ? "" : "s"}{hasFilters ? " con los filtros actuales" : ""}.</p></div></div>
     <div className="owner-filters">
       <label>Desde<input type="date" value={filters.from} onChange={event => update({ from: event.target.value })} /></label>
       <label>Hasta<input type="date" value={filters.to} onChange={event => update({ to: event.target.value })} /></label>
@@ -268,6 +266,27 @@ function Account({ data, saving, patch }: { data: Data; saving: boolean; patch: 
   </form>
   <SecurityPanel data={data} />
   </div>;
+}
+
+/** Pestaña independiente para que Equipo concentre también la cuenta personal. */
+export function AccountTab() {
+  const [data, setData] = useState<Data | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const load = useCallback(async () => {
+    try { setData(await request<Data>("/api/owner/center")); setError(""); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cargar la cuenta."); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  async function patchAccount(body: Record<string, unknown>, message?: string) {
+    setSaving(true); setError("");
+    try { await request("/api/owner/center", { method: "PATCH", body: JSON.stringify(body) }); if (message) setSuccess(message); await load(); return true; }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar."); return false; }
+    finally { setSaving(false); }
+  }
+  if (!data && !error) return <article className="panel"><p>Cargando mi cuenta…</p></article>;
+  return <section className="owner-account-tab">{error && <div className="owner-alert error" role="alert">{error}</div>}{success && <div className="owner-alert success" role="status">{success}</div>}{data && <Account data={data} saving={saving} patch={patchAccount} />}</section>;
 }
 
 type MfaFactor = { id: string; friendly_name?: string; factor_type: string; status: string };
@@ -343,7 +362,6 @@ function SecurityPanel({ data }: { data: Data }) {
 // ---------- Datos y privacidad ----------
 
 function DataControls({ data, onError, onSuccess, reload }: { data: Data; onError: (message: string) => void; onSuccess: (message: string) => void; reload: () => Promise<void> }) {
-  const [days, setDays] = useState("30");
   const [type, setType] = useState<"deletion" | "account_closure">("deletion");
   const [reason, setReason] = useState("");
   const [confirm, setConfirm] = useState(false);
@@ -365,17 +383,8 @@ function DataControls({ data, onError, onSuccess, reload }: { data: Data; onErro
   }
 
   return <div className="owner-center-grid">
-    <article className="panel">
-      <div className="panel-header"><div><p className="eyebrow">EXPORTAR</p><h3>Descarga tu información</h3><p>Archivos CSV compatibles con Excel y Google Sheets.</p></div></div>
-      <div className="owner-exports">
-        <a className="owner-export" href="/api/owner/center?export=contacts"><strong>Contactos</strong><span>Clientes y prospectos con datos de contacto.</span></a>
-        <a className="owner-export" href="/api/owner/center?export=opportunities"><strong>Oportunidades</strong><span>Pipeline comercial con etapa, valor y contacto.</span></a>
-        <div className="owner-export"><strong>Reporte de resultados</strong><span>Conversaciones, contactos y ventas del periodo.</span><div className="owner-export-row"><select className="select" value={days} onChange={event => setDays(event.target.value)} aria-label="Periodo del reporte"><option value="7">Últimos 7 días</option><option value="30">Últimos 30 días</option><option value="90">Últimos 90 días</option><option value="365">Último año</option></select><a className="secondary-button" href={`/api/owner/center?export=report&days=${days}`}>Descargar</a></div></div>
-        <a className="owner-export" href="/api/owner/center?export=activity"><strong>Actividad</strong><span>Registro de auditoría completo de la empresa.</span></a>
-      </div>
-    </article>
     <article className="panel owner-danger">
-      <div className="panel-header"><div><p className="eyebrow">CONTROL DE LA EMPRESA</p><h3>Eliminación de datos o baja</h3><p>Las solicitudes se revisan manualmente. Nada se borra de forma automática.</p></div></div>
+      <div className="panel-header"><div><p className="eyebrow">SOLICITUDES DE LA EMPRESA</p><h3>Eliminación de datos o baja</h3><p>Las solicitudes se revisan manualmente. Nada se borra de forma automática.</p></div></div>
       {!isOwner ? <p className="owner-hint">Solo el propietario de la empresa puede enviar estas solicitudes.</p> : <form onSubmit={submit} className="owner-request-form">
         <label>Tipo de solicitud<select className="select" value={type} onChange={event => setType(event.target.value as typeof type)}><option value="deletion">Eliminar datos de clientes y conversaciones</option><option value="account_closure">Dar de baja la empresa en Gavrion</option></select></label>
         <label>Motivo<textarea required minLength={8} maxLength={500} rows={3} value={reason} onChange={event => setReason(event.target.value)} placeholder="Cuéntanos el motivo y, si aplica, qué datos deseas eliminar." /></label>

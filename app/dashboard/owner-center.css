@@ -129,6 +129,16 @@ a.owner-export:hover{border-color:#cfcdf5;background:#fbfbff}
 .bell-head .ghost-button{padding:4px 8px;font-size:11px}
 .bell-all{width:100%;margin-top:10px;border:0;background:var(--sky-primary-soft,#eeedff);color:var(--sky-primary,#4b49ac);font-weight:650;font-size:12px;padding:9px;border-radius:9px;cursor:pointer}
 
+/* Resumen ejecutivo: el dueño ve salud del sitio, CRM y evolución del negocio. */
+.owner-summary{display:grid;gap:16px}
+.owner-summary-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.owner-summary-metric{padding:16px;border:1px solid var(--sky-line,#e7e9f2);border-radius:12px;background:#fff;display:grid;gap:5px}
+.owner-summary-metric span{font-size:11px;color:#7b8194}.owner-summary-metric strong{font-size:24px;color:#303349}.owner-summary-metric small{font-size:10px;color:#9a9fb0}
+.owner-analytics-chart{padding:18px;border:1px solid var(--sky-line,#e7e9f2);border-radius:12px;background:#fff}
+.owner-chart-legend{display:flex;gap:16px;justify-content:flex-end;font-size:10px;color:#7b8194}.owner-chart-legend i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}.owner-chart-legend .website{background:#4b49ac}.owner-chart-legend .crm{background:#2f9b73}.owner-chart-legend .growth{background:#d18a37}
+.owner-bar-chart{height:190px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;align-items:end;margin-top:12px}.owner-bar-group{height:100%;display:flex;align-items:end;justify-content:center;gap:4px;position:relative}.owner-bars{display:flex;align-items:end;gap:3px;height:100%}.owner-bars span{display:block;min-height:3px;border-radius:5px 5px 2px 2px;width:18px;transition:height .35s ease}.owner-bars span.website{background:#4b49ac}.owner-bars span.crm{background:#2f9b73}.owner-bars span.growth{background:#d18a37}.owner-bar-group small{position:absolute;bottom:-18px;font-size:9px;color:#9a9fb0}.owner-summary-status{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.owner-status-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:9px;padding:14px;border:1px solid var(--sky-line,#e7e9f2);border-radius:12px;background:#fff}.owner-status-card strong{display:block;font-size:12px;color:#303349}.owner-status-card small{display:block;font-size:10px;color:#7b8194;margin-top:3px}.owner-status-card>b{font-size:10px;color:#277e65;background:#e3f5ed;border-radius:20px;padding:4px 9px}.owner-status-card>b.pending{color:#9a6a17;background:#fdf2dd}
+@media(max-width:760px){.owner-summary-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.owner-summary-status{grid-template-columns:1fr}}
+
 @media(max-width:1100px){
   .owner-center-grid,.owner-center-grid.wide-left,.owner-account-grid{grid-template-columns:1fr}
 }
