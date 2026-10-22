@@ -202,6 +202,8 @@ export default function SuperadminPage() {
           <article><span>Empresas</span><strong>{items.length}</strong><small>Total registradas</small></article>
           <article><span>En preparación</span><strong>{items.filter(item=>["draft","configuring","testing"].includes(item.implementation_status)).length}</strong><small>Pendientes de entrega</small></article>
           <article><span>En producción</span><strong>{items.filter(item=>item.implementation_status==="production").length}</strong><small>Clientes activos</small></article>
+          <article><span>Sitios publicados</span><strong>{sites.filter(site=>site.status==="published").length}</strong><small>Webs activas</small></article>
+          <article><span>Bajas o suspendidas</span><strong>{items.filter(item=>["suspended","archived"].includes(item.implementation_status)).length}</strong><small>Requieren seguimiento</small></article>
         </section>
         <section className="admin-panel">
           <div className="admin-panel-head"><div><h2>Empresas</h2><p>Construye, prueba y entrega cada CRM desde un solo lugar.</p></div><label>⌕ <input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Buscar empresa o propietario" /></label></div>
