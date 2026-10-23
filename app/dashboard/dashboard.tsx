@@ -25,7 +25,16 @@ type Property = { id: string; reference: string; title: string; property_type: s
 type PropertyInquiry = { id: string; customer_name: string; phone: string; intent: "buy" | "rent" | "sell"; property_type: string | null; city: string | null; zone: string | null; budget_max: number | null; bedrooms: number | null; notes: string | null; status: "new" | "contacted" | "qualified" | "closed" | "discarded" };
 type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" };
 type SettingsTab = "control" | "empresa" | "canales" | "asistente";
+type TaskViewFilter = "mine" | "team" | "today" | "overdue" | "followups" | "conversations" | "forms";
 const setupTabs: SettingsTab[] = ["empresa", "canales", "asistente"];
+
+function classifyTask(title: string): Task["source"] {
+  const value = title.toLowerCase();
+  if (value.includes("mensaje") || value.includes("conversación") || value.includes("conversacion")) return "conversation";
+  if (value.includes("formulario") || value.includes("reserva") || value.includes("reservación") || value.includes("reservacion") || value.includes("pedido") || value.includes("cita") || value.includes("visita") || value.includes("cotización") || value.includes("cotizacion")) return "form";
+  if (value.includes("contactar") || value.includes("seguimiento") || value.includes("follow-up")) return "followup";
+  return "manual";
+}
 
 export default function Dashboard() {
   const [authReady, setAuthReady] = useState(false);
@@ -67,6 +76,7 @@ export default function Dashboard() {
   const [metricsVersion, setMetricsVersion] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<"all" | "pending" | "done">("all");
+  const [taskViewFilter, setTaskViewFilter] = useState<TaskViewFilter>("mine");
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("");
   const [time, setTime] = useState("15:00");
@@ -76,7 +86,7 @@ export default function Dashboard() {
   const canOperateSales = supportMode || currentRole === "owner" || currentRole === "admin" || currentRole === "agent";
   const roleAllowsModule = (viewId: string) => {
     if (supportMode) return !["equipo", "configuracion", "automatizaciones", "campos"].includes(viewId);
-    if (currentRole === "viewer") return ["inicio", "conversaciones", "contactos", "reportes"].includes(viewId);
+    if (currentRole === "viewer") return ["inicio", "conversaciones", "contactos", "tareas", "calendario", "reportes"].includes(viewId);
     if (isClientAdmin) return true;
     if (currentRole === "agent") return !["equipo", "campos", "automatizaciones", "auditoria", "configuracion"].includes(viewId);
     return true;
@@ -195,15 +205,17 @@ export default function Dashboard() {
           }
           if (knowledgeResult.data) { setKnowledgeId(knowledgeResult.data.id); setKnowledgeContent(knowledgeResult.data.content); }
 
-          const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult, propertiesResult, inquiriesResult, visitsResult] = await Promise.all([
+          const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult, propertiesResult, inquiriesResult, visitsResult, formTasksResult, inquiryTasksResult] = await Promise.all([
             supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
-            supabase.from("tasks").select("id, title, due_at, completed_at").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }),
+            supabase.from("tasks").select("id, title, due_at, completed_at, assigned_to").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }),
             supabase.from("deals").select("id, title, stage, value, currency, contact_id, expected_close_date").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
             supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, handling_mode, assigned_to, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }),
             supabase.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: true }),
             supabase.from("properties").select("id, reference, title, property_type, operation, price, currency, city, zone, bedrooms, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
             supabase.from("property_inquiries").select("id, customer_name, phone, intent, property_type, city, zone, budget_max, bedrooms, notes, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
-            supabase.from("property_visits").select("id, property_reference, customer_name, phone, requested_date, requested_time, party_size, notes, status").eq("tenant_id", membership.tenant_id).order("requested_date", { ascending: true })
+            supabase.from("property_visits").select("id, property_reference, customer_name, phone, requested_date, requested_time, party_size, notes, status").eq("tenant_id", membership.tenant_id).order("requested_date", { ascending: true }),
+            supabase.from("site_form_submissions").select("task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("task_id", "is", null).limit(5000),
+            supabase.from("property_inquiries").select("follow_up_task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("follow_up_task_id", "is", null).limit(5000)
           ]);
           if (contactsResult.error || tasksResult.error || dealsResult.error || conversationsResult.error || messagesResult.error || propertiesResult.error || inquiriesResult.error || visitsResult.error) {
             setNotice({ type: "error", text: contactsResult.error?.message || tasksResult.error?.message || dealsResult.error?.message || conversationsResult.error?.message || messagesResult.error?.message || propertiesResult.error?.message || inquiriesResult.error?.message || visitsResult.error?.message || "No fue posible cargar los datos." });
@@ -211,7 +223,10 @@ export default function Dashboard() {
             const statusLabels: Record<string, Contact["status"]> = { customer: "Cliente", lead: "Prospecto", inactive: "Inactivo" };
             const loadedContacts: Contact[] = (contactsResult.data || []).map(item => ({ id: item.id, name: item.full_name, email: item.email || "", phone: item.phone || "", company: item.company || "", status: statusLabels[item.status] || "Prospecto" }));
             setContacts(loadedContacts);
-            setTasks((tasksResult.data || []) as Task[]);
+const taskSources = new Map<string, Task["source"]>();
+            for (const item of formTasksResult.data || []) if (item.task_id) taskSources.set(item.task_id, "form");
+            for (const item of inquiryTasksResult.data || []) if (item.follow_up_task_id && !taskSources.has(item.follow_up_task_id)) taskSources.set(item.follow_up_task_id, "conversation");
+            setTasks((tasksResult.data || []).map(item => ({ ...(item as Task), source: taskSources.get(item.id) || classifyTask(item.title) })));
             setProperties((propertiesResult.data || []).map(item => ({ ...item, price: Number(item.price || 0) })) as Property[]);
             setPropertyInquiries((inquiriesResult.data || []).map(item => ({ ...item, budget_max: item.budget_max == null ? null : Number(item.budget_max) })) as PropertyInquiry[]);
             setPropertyVisits((visitsResult.data || []) as PropertyVisit[]);
@@ -342,16 +357,23 @@ export default function Dashboard() {
     });
   }, [tenantId, period, metricsVersion]);
 
-  async function createTask(event: FormEvent) {
-    event.preventDefault();
-    if (!title.trim() || !tenantId) return;
+  async function addTask(taskTitle: string, taskTime: string) {
+    if (!taskTitle.trim() || !tenantId) return;
     const supabase = createClientSupabase();
     if (!supabase) return;
-    const dueAt = `${new Date().toISOString().slice(0, 10)}T${time}:00`;
-    const { data, error } = await supabase.from("tasks").insert({ tenant_id: tenantId, title: title.trim(), due_at: dueAt, assigned_to: userId || null }).select("id, title, due_at, completed_at").single();
+    const dueAt = `${new Date().toISOString().slice(0, 10)}T${taskTime}:00`;
+    const { data, error } = await supabase.from("tasks").insert({ tenant_id: tenantId, title: taskTitle.trim(), due_at: dueAt, assigned_to: userId || null }).select("id, title, due_at, completed_at, assigned_to").single();
     if (error) { showNotice("error", `No se pudo guardar la tarea: ${error.message}`); return; }
-    setTasks(current => [data as Task, ...current]); setTitle(""); setCreating(false);
+    setTasks(current => [{ ...(data as Task), source: "manual" }, ...current]);
     showNotice("success", "Tarea guardada en Supabase.");
+  }
+
+  async function createTask(event: FormEvent) {
+    event.preventDefault();
+    if (!title.trim()) return;
+    await addTask(title, time);
+    setTitle("");
+    setCreating(false);
   }
 
   async function toggleTask(task: Task) {
@@ -394,7 +416,7 @@ export default function Dashboard() {
     const moduleByView: Record<string, string> = {
       inicio: "dashboard", conversaciones: "conversations", inmobiliaria: "properties",
       reservaciones: "reservations", pedidos: "orders", citas: "appointments", cotizaciones: "quotes",
-      productos: "products", contactos: "contacts", pipeline_v2: "pipeline", campos: "pipeline",
+      productos: "products", contactos: "contacts", pipeline_v2: "pipeline", tareas: "tasks", calendario: "tasks", campos: "pipeline",
       equipo: "team", automatizaciones: "automations", reportes: "reports"
     };
     const requiredModule = moduleByView[view];
@@ -604,7 +626,7 @@ export default function Dashboard() {
     else setPropertyVisits(current => current.map(item => item.id === id ? { ...item, status: status as PropertyVisit["status"] } : item));
     showNotice("success", "Estado actualizado.");
   }
-  const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", inmobiliaria: "Gestión inmobiliaria", reservaciones:"Reservaciones", pedidos:"Pedidos", citas:"Citas", cotizaciones:"Cotizaciones", productos:"Productos", contactos: "Contactos", pipeline: "Pipeline comercial", pipeline_v2:"Pipeline comercial", campos:"Campos personalizados", equipo: "Equipo", automatizaciones: "Automatizaciones", reportes: "Reportes", auditoria: "Auditoría", configuracion: "Configuración" };
+  const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", contactos: "Contactos", pipeline: "Pipeline comercial", pipeline_v2: "Pipeline comercial", tareas: "Tareas", calendario: "Calendario", inmobiliaria: "Gestión inmobiliaria", reservaciones:"Reservaciones", pedidos:"Pedidos", citas:"Citas", cotizaciones:"Cotizaciones", productos:"Productos", campos:"Campos personalizados", equipo: "Equipo y cuenta", automatizaciones: "Automatizaciones", reportes: "Reportes", auditoria: "Auditoría", configuracion: "Configuración" };
   const globalResults = useMemo(() => {
     const query = globalQuery.trim().toLowerCase();
     if (!query) return [];
@@ -717,15 +739,32 @@ export default function Dashboard() {
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand gavrion-brand tenant-brand">{tenantLogoUrl && !logoFailed ? <img className="tenant-logo" src={tenantLogoUrl} alt={`Logo de ${account.company || "la empresa"}`} onError={()=>setLogoFailed(true)} /> : <span className="brand-mark">{(account.company || "E").charAt(0).toUpperCase()}</span>}<span>{account.company || "Mi empresa"}</span></div>
-      <nav className="nav">{[["inicio","⌂","Inicio","dashboard"],["conversaciones","◫","Conversaciones","conversations"],["inmobiliaria","▤","Inmobiliaria","properties"],["reservaciones","▣","Reservaciones","reservations"],["pedidos","▤","Pedidos","orders"],["citas","◷","Citas","appointments"],["cotizaciones","◇","Cotizaciones","quotes"],["productos","▦","Productos","products"],["contactos","♙","Contactos","contacts"],["pipeline_v2","▦","Pipeline","pipeline"],["campos","＋","Campos personalizados","pipeline"],["equipo","♧","Equipo","team"],["automatizaciones","⌁","Automatizaciones","automations"],["reportes","⌗","Reportes","reports"],["auditoria","◉","Auditoría","audit"]].filter(([id,,,module])=>roleAllowsModule(id)&& (enabledModules===null||enabledModules.includes(module))).map(([id, icon, label]) => <button key={id} onClick={()=>navigate(id)} className={`nav-item ${view===id?"active":""}`}><span>{icon}</span>{label}{id==="conversaciones"&&totalUnread>0&&<i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id==="inmobiliaria"&&<i aria-label="Gestiones pendientes">{propertyInquiries.filter(item=>item.status==="new").length+propertyVisits.filter(item=>item.status==="pending").length}</i>}</button>)}</nav>
-      {isClientAdmin&&<div className="settings-nav-entry"><button type="button" aria-expanded={settingsMenuOpen} onClick={()=>{if(view!=="configuracion"){setSettingsMenuOpen(true);navigate("configuracion")}else setSettingsMenuOpen(value=>!value)}} className={`nav-item settings-parent ${view==="configuracion"?"active":""}`}><span>⚙</span><span>Configuración</span><b className={`settings-chevron ${settingsMenuOpen?"open":""}`}>⌄</b></button>{settingsMenuOpen&&<nav className="settings-sidebar-menu" aria-label="Submenú de configuración"><button type="button" className={view==="configuracion"&&settingsTab==="control"?"active":""} onClick={()=>openSettings("control")}><span>◎</span>Centro de control</button><button type="button" className={view==="configuracion"&&settingsTab==="empresa"?"active":""} onClick={()=>{setSettingsTab("empresa");navigate("configuracion")}}><span>⌂</span>Empresa y widget</button><button type="button" className={view==="configuracion"&&settingsTab==="canales"?"active":""} onClick={()=>{setSettingsTab("canales");navigate("configuracion")}}><span>◉</span>Canales y conexiones</button><button type="button" className={view==="configuracion"&&settingsTab==="asistente"?"active":""} onClick={()=>{setSettingsTab("asistente");navigate("configuracion")}}><span>✦</span>Asistente IA</button></nav>}</div>}
+      <nav className="nav">
+        {([
+          ["inicio", "⌂", "Inicio", "dashboard"],
+          ["conversaciones", "◫", "Conversaciones", "conversations"],
+          ["contactos", "♙", "Contactos", "contacts"],
+          ["pipeline_v2", "◇", "Ventas / Pipeline", "pipeline"],
+          ["tareas", "✓", "Tareas", "tasks"],
+          ["calendario", "◷", "Calendario", "tasks"],
+          ["inmobiliaria", "▤", "Inmobiliaria", "properties"],
+          ["reservaciones", "▣", "Reservaciones", "reservations"],
+          ["pedidos", "▤", "Pedidos", "orders"],
+          ["citas", "◷", "Citas", "appointments"],
+          ["cotizaciones", "◇", "Cotizaciones", "quotes"],
+          ["productos", "▦", "Productos", "products"],
+          ["automatizaciones", "⌁", "Automatizaciones", "automations"],
+          ["reportes", "⌗", "Reportes", "reports"]
+        ] as const).filter(([id,,,module]) => roleAllowsModule(id) && (enabledModules === null || enabledModules.includes(module))).map(([id, icon, label]) => <button key={id} onClick={() => navigate(id)} className={`nav-item ${view === id ? "active" : ""}`}><span>{icon}</span>{label}{id === "conversaciones" && totalUnread > 0 && <i aria-label={`${totalUnread} mensajes sin leer`}>{totalUnread}</i>}{id === "inmobiliaria" && <i aria-label="Gestiones pendientes">{propertyInquiries.filter(item => item.status === "new").length + propertyVisits.filter(item => item.status === "pending").length}</i>}</button>)}
+      </nav>
+      {isClientAdmin&&<div className="settings-nav-entry"><button type="button" aria-expanded={settingsMenuOpen} onClick={()=>{if(view!=="configuracion"){setSettingsMenuOpen(true);navigate("configuracion")}else setSettingsMenuOpen(value=>!value)}} className={`nav-item settings-parent ${view==="configuracion"?"active":""}`}><span>⚙</span><span>Configuración</span><b className={`settings-chevron ${settingsMenuOpen?"open":""}`}>⌄</b></button>{settingsMenuOpen&&<nav className="settings-sidebar-menu" aria-label="Submenú de configuración"><button type="button" className={view==="configuracion"&&settingsTab==="control"?"active":""} onClick={()=>openSettings("control")}><span>◎</span>Centro de control</button><button type="button" className={view==="configuracion"&&settingsTab==="empresa"?"active":""} onClick={()=>{setSettingsTab("empresa");navigate("configuracion")}}><span>⌂</span>Empresa y widget</button><button type="button" className={view==="configuracion"&&settingsTab==="canales"?"active":""} onClick={()=>{setSettingsTab("canales");navigate("configuracion")}}><span>◉</span>Canales y conexiones</button><button type="button" className={view==="configuracion"&&settingsTab==="asistente"?"active":""} onClick={()=>{setSettingsTab("asistente");navigate("configuracion")}}><span>✦</span>Asistente IA</button><button type="button" className={view==="equipo"?"active":""} onClick={()=>navigate("equipo")}><span>♧</span>Equipo y cuenta</button><button type="button" className={view==="campos"?"active":""} onClick={()=>navigate("campos")}><span>＋</span>Campos personalizados</button></nav>}</div>}
       <div className="sidebar-bottom"><div className="profile"><span className="avatar purple">{account.initials}</span><div><strong>{account.name}</strong><small>{account.role}{account.company ? ` · ${account.company}` : ""}</small><span className="profile-email">{account.email}</span></div></div><button className="logout-button" onClick={logout} disabled={loggingOut}><span>↪</span>{loggingOut ? "Cerrando sesión…" : "Cerrar sesión"}</button></div>
     </aside>
     <main className="main">
       {supportMode&&<div className="support-mode-banner"><strong>Modo soporte:</strong> estás operando dentro de {account.company}. Todas las acciones quedan registradas.<a href="/admin">Volver al panel</a></div>}
       <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="topbar-actions"><div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div>{isClientAdmin&&<NotificationBell refreshKey={bellRefresh} onOpen={openOwnerNotification} onSeeAll={()=>openSettings("control")} />}</div></header>
       {view === "inicio" && <section className="view active">
-        <div className="hero-row"><div><h2>Todo avanza en la dirección correcta.</h2><p>Aquí tienes el resumen de tu equipo y tus clientes.</p></div><select className="select" aria-label="Filtrar periodo" value={period} onChange={e => setPeriod(e.target.value as Period)}><option value="30d">Últimos 30 días</option><option value="week">Esta semana</option><option value="year">Este año</option></select></div>
+        <div className="hero-row"><div><p className="eyebrow">PANEL EJECUTIVO</p><h2>Resumen de tu operación</h2><p>Objetivos, progreso y actividad de tu empresa en un solo lugar.</p></div><select className="select" aria-label="Filtrar periodo" value={period} onChange={e => setPeriod(e.target.value as Period)}><option value="30d">Últimos 30 días</option><option value="week">Esta semana</option><option value="year">Este año</option></select></div>
         <div className="metrics-grid">{[
           { label: "Contactos activos", value: dashboardMetrics.contacts.toLocaleString("es-HN"), detail: `Datos reales · ${periodLabels[period]}` },
           { label: "Conversaciones", value: dashboardMetrics.conversations.toLocaleString("es-HN"), detail: `Datos reales · ${periodLabels[period]}` },
@@ -744,6 +783,8 @@ export default function Dashboard() {
         </div>
       </section>}
 
+{view === "tareas" && <TasksView tasks={tasks} teamMembers={teamMembers} userId={userId} filter={taskViewFilter} onFilterChange={setTaskViewFilter} onToggle={toggleTask} onDelete={deleteTask} onCreate={addTask} />}
+      {view === "calendario" && <CalendarView tasks={tasks} onToggle={toggleTask} />}
       {view === "conversaciones" && <section className="view active">
         <div className="section-heading"><div><h2>Bandeja unificada</h2><p>{totalUnread ? `${totalUnread} mensaje${totalUnread===1?"":"s"} sin leer` : "Todas las conversaciones están al día"}.</p></div><div className="section-actions"><button className="secondary-button" onClick={exportConversations}>Descargar CSV</button><button className="secondary-button" onClick={enableNotifications}>Activar notificaciones</button></div></div>
         {currentThread ? <div className="inbox-layout">
@@ -788,8 +829,93 @@ export default function Dashboard() {
         {settingsTab==="canales"&&<MetaConnections />}
         {settingsTab==="asistente"&&<form className="panel assistant-settings" onSubmit={saveAssistant}><div className="assistant-settings-head"><div><p className="eyebrow">ASISTENTE AUTOMÁTICO</p><h3>Conocimiento de la empresa</h3><p>Escribe información confirmada sobre servicios, horarios, ubicación, precios, políticas y preguntas frecuentes.</p></div><label className="assistant-switch"><input type="checkbox" checked={assistantEnabled} onChange={e=>setAssistantEnabled(e.target.checked)} /> Respuestas automáticas</label></div><div className="assistant-fields"><label>Nombre del asistente<input value={assistantName} onChange={e=>setAssistantName(e.target.value)} placeholder="Asistente virtual" /></label><label>Instrucciones de tono<input value={assistantInstructions} onChange={e=>setAssistantInstructions(e.target.value)} placeholder="Amable, breve y profesional" /></label></div><label>Información para responder<textarea required rows={10} value={knowledgeContent} onChange={e=>setKnowledgeContent(e.target.value)} placeholder={'Ejemplo:\nHorario: todos los días de 6:30 a. m. a 9:00 p. m.\nUbicación: CA-4, km 115.\nEspecialidades: sopa de gallina india, pescado frito...'} /></label><label>Mensaje de transferencia<input value={handoffMessage} onChange={e=>setHandoffMessage(e.target.value)} /></label><div className="assistant-save"><small>La IA transferirá cuando no encuentre una respuesta confirmada o el visitante pida una persona.</small><button className="primary-button" disabled={savingAssistant}>{savingAssistant?"Guardando…":"Guardar y activar"}</button></div></form>}
       </section>}
-      {!["inicio","conversaciones","inmobiliaria","reservaciones","pedidos","citas","cotizaciones","productos","contactos","pipeline_v2","campos","equipo","automatizaciones","reportes","auditoria","configuracion","pipeline"].includes(view) || !roleAllowsModule(view) ? <section className="view active role-restricted"><div className="empty-feature"><div className="feature-visual">⛨</div><h3>Acceso limitado por rol</h3><p>Tu cuenta puede operar las conversaciones y ventas asignadas. Solicita a un administrador del cliente el acceso a esta sección.</p></div></section> : null}
+      {!["inicio","conversaciones","tareas","calendario","inmobiliaria","reservaciones","pedidos","citas","cotizaciones","productos","contactos","pipeline_v2","campos","equipo","automatizaciones","reportes","auditoria","configuracion","pipeline"].includes(view) || !roleAllowsModule(view) ? <section className="view active role-restricted"><div className="empty-feature"><div className="feature-visual">⛨</div><h3>Acceso limitado por rol</h3><p>Tu cuenta puede operar las conversaciones y ventas asignadas. Solicita a un administrador del cliente el acceso a esta sección.</p></div></section> : null}
       {notice&&<div className={`crm-notice ${notice.type}`} role="status">{notice.text}</div>}
     </main>
   </div>;
+}
+
+type TaskCenterProps = {
+  tasks: Task[];
+  teamMembers: TeamMember[];
+  userId: string;
+  filter: TaskViewFilter;
+  onFilterChange: (filter: TaskViewFilter) => void;
+  onToggle: (task: Task) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onCreate: (title: string, time: string) => Promise<void>;
+};
+
+const taskFilterLabels: Record<TaskViewFilter, string> = {
+  mine: "Mis tareas",
+  team: "Tareas del equipo",
+  today: "Pendientes de hoy",
+  overdue: "Vencidas",
+  followups: "Próximos seguimientos",
+  conversations: "Desde conversaciones",
+  forms: "Desde formularios del sitio"
+};
+
+function taskSourceLabel(source: Task["source"]) {
+  if (source === "conversation") return "Conversación";
+  if (source === "form") return "Formulario del sitio";
+  if (source === "followup") return "Seguimiento";
+  return "Creada manualmente";
+}
+
+function formatTaskDate(value: string | null) {
+  if (!value) return "Sin fecha";
+  return new Date(value).toLocaleString("es-HN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function localDateKey(value: Date) {
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function TasksView({ tasks, teamMembers, userId, filter, onFilterChange, onToggle, onDelete, onCreate }: TaskCenterProps) {
+  const [creating, setCreating] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newTime, setNewTime] = useState("15:00");
+  const now = new Date();
+  const todayKey = localDateKey(now);
+  const filtered = tasks.filter(task => {
+    const due = task.due_at ? new Date(task.due_at) : null;
+    const dueKey = due && !Number.isNaN(due.getTime()) ? localDateKey(due) : "";
+    if (filter === "mine") return task.assigned_to === userId;
+    if (filter === "today") return dueKey === todayKey && !task.completed_at;
+    if (filter === "overdue") return Boolean(due && due.getTime() < now.getTime() && !task.completed_at);
+    if (filter === "followups") return task.source === "followup" && !task.completed_at;
+    if (filter === "conversations") return task.source === "conversation";
+    if (filter === "forms") return task.source === "form";
+    return true;
+  });
+  const pending = filtered.filter(task => !task.completed_at).length;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!newTitle.trim()) return;
+    await onCreate(newTitle, newTime);
+    setNewTitle("");
+    setCreating(false);
+  };
+  return <section className="view active tasks-center-view">
+    <div className="section-heading"><div><p className="eyebrow">OPERACIÓN DIARIA</p><h2>Tareas</h2><p>Organiza seguimientos, pendientes y acciones que nacen desde el CRM y tu sitio web.</p></div><button className="primary-button" onClick={() => setCreating(true)}>＋ Nueva tarea</button></div>
+    {creating && <form className="panel task-center-create" onSubmit={submit}><input required autoFocus value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="Ej. Dar seguimiento a un nuevo interesado" /><input type="time" value={newTime} onChange={event => setNewTime(event.target.value)} aria-label="Hora de la tarea" /><button className="primary-button">Crear tarea</button><button type="button" className="ghost-button" onClick={() => setCreating(false)}>Cancelar</button></form>}
+    <div className="task-center-filters" role="tablist" aria-label="Filtros de tareas">{(Object.keys(taskFilterLabels) as TaskViewFilter[]).map(key => <button type="button" role="tab" aria-selected={filter === key} className={filter === key ? "active" : ""} key={key} onClick={() => onFilterChange(key)}>{taskFilterLabels[key]}</button>)}</div>
+    <article className="panel task-center-panel"><div className="panel-header"><div><h3>{taskFilterLabels[filter]}</h3><p>{pending} pendiente{pending === 1 ? "" : "s"} · {filtered.length} en este filtro</p></div><span className="task-center-count">{filtered.length}</span></div><div className="task-center-list">{filtered.length ? filtered.map(task => { const assignee = teamMembers.find(member => member.id === task.assigned_to); return <div className={`task-center-row ${task.completed_at ? "done" : ""}`} key={task.id}><input type="checkbox" checked={Boolean(task.completed_at)} onChange={() => void onToggle(task)} aria-label={`Completar ${task.title}`} /><div className="task-center-main"><strong>{task.title}</strong><small>{formatTaskDate(task.due_at)} · {assignee?.name || "Sin asignar"}</small></div><span className={`task-source ${task.source || "manual"}`}>{taskSourceLabel(task.source)}</span><button type="button" className="task-delete persistent" onClick={() => void onDelete(task.id)} aria-label={`Eliminar ${task.title}`}>×</button></div>; }) : <div className="task-center-empty"><span>✓</span><strong>No hay tareas en este filtro</strong><p>Cuando llegue una solicitud o crees un seguimiento, aparecerá aquí.</p></div>}</div></article>
+  </section>;
+}
+
+function CalendarView({ tasks, onToggle }: { tasks: Task[]; onToggle: (task: Task) => Promise<void> }) {
+  const today = new Date();
+  const [selectedDate, setSelectedDate] = useState(localDateKey(today));
+  const first = new Date(today.getFullYear(), today.getMonth(), 1);
+  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+  const offset = (first.getDay() + 6) % 7;
+  const cells: Array<Date | null> = Array.from({ length: offset + daysInMonth }, (_, index) => index < offset ? null : new Date(today.getFullYear(), today.getMonth(), index - offset + 1));
+  const selectedTasks = tasks.filter(task => task.due_at && localDateKey(new Date(task.due_at)) === selectedDate);
+  const upcoming = tasks.filter(task => task.due_at && !task.completed_at && new Date(task.due_at).getTime() >= Date.now()).sort((a, b) => new Date(a.due_at || 0).getTime() - new Date(b.due_at || 0).getTime()).slice(0, 8);
+  return <section className="view active calendar-view">
+    <div className="section-heading"><div><p className="eyebrow">PLANIFICACIÓN</p><h2>Calendario</h2><p>Visualiza vencimientos y próximos seguimientos en un solo lugar.</p></div></div>
+    <div className="calendar-layout"><article className="panel calendar-panel"><div className="calendar-heading"><h3>{today.toLocaleDateString("es-HN", { month: "long", year: "numeric" })}</h3><span>{tasks.filter(task => !task.completed_at).length} pendientes</span></div><div className="calendar-weekdays">{["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((date, index) => { const key = date ? localDateKey(date) : `empty-${index}`; const dayTasks = date ? tasks.filter(task => task.due_at && localDateKey(new Date(task.due_at)) === key) : []; return date ? <button type="button" className={`calendar-day ${key === selectedDate ? "selected" : ""} ${key === localDateKey(today) ? "today" : ""}`} key={key} onClick={() => setSelectedDate(key)}><strong>{date.getDate()}</strong>{dayTasks.slice(0, 3).map(task => <span className={task.completed_at ? "done" : ""} key={task.id}>{task.title}</span>)}{dayTasks.length > 3 && <small>+{dayTasks.length - 3} más</small>}</button> : <span className="calendar-day empty" key={key} />; })}</div></article><aside className="panel calendar-agenda"><div className="panel-header"><div><p className="eyebrow">AGENDA</p><h3>{selectedTasks.length ? "Tareas del día" : "Próximos seguimientos"}</h3></div></div>{selectedTasks.length ? selectedTasks.map(task => <label className={`calendar-task ${task.completed_at ? "done" : ""}`} key={task.id}><input type="checkbox" checked={Boolean(task.completed_at)} onChange={() => void onToggle(task)} /><span><strong>{task.title}</strong><small>{formatTaskDate(task.due_at)}</small></span></label>) : upcoming.map(task => <label className="calendar-task" key={task.id}><input type="checkbox" checked={Boolean(task.completed_at)} onChange={() => void onToggle(task)} /><span><strong>{task.title}</strong><small>{formatTaskDate(task.due_at)}</small></span></label>)}{!selectedTasks.length && !upcoming.length && <p className="task-empty">No hay tareas programadas.</p>}</aside></div>
+  </section>;
 }
