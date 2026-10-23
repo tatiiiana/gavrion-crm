@@ -14,7 +14,7 @@ type Data = {
   health: HealthItem[];
   site: { published_url?: string | null } | null;
   analytics: {
-    totals: { website: number; conversations: number; contacts: number; opportunities: number; growth: number; cancellations: number };
+    totals: { website: number; conversations: number; contacts: number; leads: number; opportunities: number; sales: number; salesAmount: number; averageResponseMinutes: number | null; growth: number; cancellations: number };
     trend: Array<{ label: string; website: number; crm: number; growth: number }>;
     siteStatus: string;
     crmStatus: string;
@@ -47,6 +47,18 @@ export function timeAgo(value: string) {
 }
 
 export function notificationIcon(type: string) { return typeIcons[type] || "•"; }
+
+function formatResponseTime(minutes: number | null) {
+  if (minutes === null) return "—";
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining ? `${hours} h ${remaining} min` : `${hours} h`;
+}
+
+function formatSales(value: number) {
+  return new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL", maximumFractionDigits: 0 }).format(value);
+}
 
 async function request<T = unknown>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, { cache: "no-store", ...init, headers: { "Content-Type": "application/json", ...(init?.headers || {}) } });
@@ -102,22 +114,28 @@ export function OwnerCenter({ onNavigateSettings, onOpenNotification, onChanged 
 
 function Summary({ data }: { data: Data; unread: number; onNavigateSettings?: (tab: string) => void; onSeeAlerts: () => void; onOpen: (item: OwnerNotification) => void }) {
   const analytics = data.analytics;
+  const totals = analytics.totals;
   const max = Math.max(...analytics.trend.flatMap(item => [item.website, item.crm, item.growth]), 1);
-  const totals = [
-    ["Solicitudes del sitio", analytics.totals.website, "website"],
-    ["Conversaciones CRM", analytics.totals.conversations, "crm"],
-    ["Crecimiento", analytics.totals.growth, "growth"],
-    ["Bajas solicitadas", analytics.totals.cancellations, "cancellations"]
+  const conversion = totals.contacts > 0 ? Math.min(100, Math.round((totals.opportunities / totals.contacts) * 100)) : 0;
+  const pulse = Math.min(100, Math.round((analytics.siteStatus === "published" ? 35 : 15) + (analytics.crmStatus === "active" ? 35 : 15) + Math.min(30, conversion)));
+  const priorities = [
+    totals.website === 0 ? { title: "Activar captación", body: "Publica formularios y campañas para que el sitio empiece a alimentar el CRM.", tone: "attention" } : { title: "Aprovechar la demanda", body: `${totals.website.toLocaleString("es-HN")} solicitudes del sitio esperan un seguimiento consistente.`, tone: "positive" },
+    totals.cancellations > 0 ? { title: "Revisar bajas", body: `${totals.cancellations.toLocaleString("es-HN")} solicitud${totals.cancellations === 1 ? " requiere" : "es requieren"} revisión del equipo.`, tone: "attention" } : { title: "Retener el ritmo", body: "No hay bajas solicitadas; mantén el seguimiento de contactos y oportunidades.", tone: "positive" },
+    analytics.crmStatus !== "active" ? { title: "Reactivar el CRM", body: "Comprueba las integraciones y asignaciones para recuperar actividad operativa.", tone: "attention" } : { title: "Acelerar cierres", body: `${totals.opportunities.toLocaleString("es-HN")} oportunidades están listas para una próxima acción comercial.`, tone: "positive" }
+  ];
+  const metrics = [
+    { label: "Leads", value: totals.leads, detail: "Contactos captados", tone: "website" },
+    { label: "Conversaciones", value: totals.conversations, detail: "Conversaciones nuevas", tone: "crm" },
+    { label: "Ventas", value: formatSales(totals.salesAmount), detail: `${totals.sales.toLocaleString("es-HN")} cierre${totals.sales === 1 ? "" : "s"} ganado${totals.sales === 1 ? "" : "s"}`, tone: "growth" },
+    { label: "Tiempo de respuesta", value: formatResponseTime(totals.averageResponseMinutes), detail: "Promedio registrado", tone: "response" }
   ] as const;
   return <div className="owner-summary">
-    <div className="owner-summary-metrics">{totals.map(([label, value, tone]) => <article className={`panel owner-summary-metric ${tone}`} key={label}><span>{label}</span><strong>{value.toLocaleString("es-HN")}</strong><small>Últimos 30 días</small></article>)}</div>
-    <div className="owner-center-grid">
-      <article className="panel owner-analytics-chart"><div className="panel-header"><div><p className="eyebrow">EVOLUCIÓN</p><h3>Sitio web, CRM y crecimiento</h3><p>Actividad acumulada por semana.</p></div></div><div className="owner-chart-legend"><span><i className="website" />Sitio web</span><span><i className="crm" />CRM</span><span><i className="growth" />Crecimiento</span></div><div className="owner-bar-chart">{analytics.trend.map(item => <div className="owner-bar-group" key={item.label}><div className="owner-bars"><span className="website" style={{ height: `${Math.max(item.website ? 8 : 2, item.website / max * 100)}%` }} title={`${item.website} solicitudes del sitio`} /><span className="crm" style={{ height: `${Math.max(item.crm ? 8 : 2, item.crm / max * 100)}%` }} title={`${item.crm} conversaciones`} /><span className="growth" style={{ height: `${Math.max(item.growth ? 8 : 2, item.growth / max * 100)}%` }} title={`${item.growth} acciones de crecimiento`} /></div><small>{item.label}</small></div>)}</div></article>
-      <article className="panel owner-summary-status"><div className="panel-header"><div><p className="eyebrow">ESTADO OPERATIVO</p><h3>Tu sitio y CRM</h3><p>Resumen rápido para tomar decisiones.</p></div></div><div className="owner-status-card"><span className={`health-dot ${data.analytics.siteStatus}`} /><div><strong>Sitio web</strong><small>{data.analytics.siteStatus === "published" ? "Publicado y disponible" : "Pendiente de publicación"}</small></div><b>{data.analytics.siteStatus === "published" ? "Activo" : "Pendiente"}</b></div><div className="owner-status-card"><span className={`health-dot ${data.analytics.crmStatus}`} /><div><strong>CRM</strong><small>{data.analytics.crmStatus === "active" ? "Operando con datos reales" : "Sin actividad reciente"}</small></div><b>{data.analytics.crmStatus === "active" ? "Activo" : "Pendiente"}</b></div></article>
-    </div>
+    <header className="owner-executive-header"><div><p className="eyebrow">CONTROL EJECUTIVO · ÚLTIMOS 30 DÍAS</p><h2>Resumen ejecutivo</h2><p>Una lectura rápida de la salud del sitio, la captación y la operación comercial. Empieza por las prioridades y luego profundiza en la evolución.</p></div><div className={`owner-pulse ${pulse >= 70 ? "strong" : pulse >= 45 ? "steady" : "attention"}`}><span>Pulso del negocio</span><strong>{pulse}%</strong><small>{pulse >= 70 ? "Operación saludable" : pulse >= 45 ? "En desarrollo" : "Requiere atención"}</small></div></header>
+    <div className="owner-executive-grid"><article className="panel owner-executive-hero"><div className="panel-header"><div><p className="eyebrow">SEÑALES CLAVE</p><h3>Qué merece atención hoy</h3><p>Prioridades accionables, no solo números.</p></div></div><div className="owner-progress-list"><div><span><b>Captación</b><em>{totals.website.toLocaleString("es-HN")} solicitudes</em></span><i><strong style={{ width: `${Math.min(100, totals.website ? 38 + Math.min(62, totals.website / Math.max(1, totals.contacts) * 100) : 8)}%` }} /></i></div><div><span><b>Conversión</b><em>{conversion}% del embudo</em></span><i><strong style={{ width: `${Math.max(8, conversion)}%` }} /></i></div><div><span><b>Continuidad</b><em>{totals.cancellations ? `${totals.cancellations} bajas por resolver` : "Sin bajas pendientes"}</em></span><i><strong className={totals.cancellations ? "warning" : "healthy"} style={{ width: `${totals.cancellations ? Math.max(18, 100 - Math.min(80, totals.cancellations * 12)) : 100}%` }} /></i></div></div></article><article className="panel owner-priority-panel"><div className="panel-header"><div><p className="eyebrow">PLAN DE ACCIÓN</p><h3>Próximos movimientos</h3></div></div><div className="owner-action-list">{priorities.map(item => <div className={`owner-action ${item.tone}`} key={item.title}><span>{item.tone === "attention" ? "!" : "✓"}</span><div><strong>{item.title}</strong><p>{item.body}</p></div></div>)}</div></article></div>
+    <div className="owner-summary-metrics">{metrics.map(item => <article className={`panel owner-summary-metric ${item.tone}`} key={item.label}><span>{item.label}</span><strong>{typeof item.value === "number" ? item.value.toLocaleString("es-HN") : item.value}</strong><small>{item.detail} · últimos 30 días</small></article>)}</div>
+    <div className="owner-center-grid"><article className="panel owner-analytics-chart"><div className="panel-header"><div><p className="eyebrow">EVOLUCIÓN SEMANAL</p><h3>Actividad del negocio</h3><p>Compara la demanda del sitio con el trabajo del CRM.</p></div></div><div className="owner-chart-legend"><span><i className="website" />Sitio web</span><span><i className="crm" />CRM</span><span><i className="growth" />Crecimiento</span></div><div className="owner-bar-chart">{analytics.trend.map(item => <div className="owner-bar-group" key={item.label}><div className="owner-bars"><span className="website" style={{ height: `${Math.max(item.website ? 8 : 2, item.website / max * 100)}%` }} title={`${item.website} solicitudes del sitio`} /><span className="crm" style={{ height: `${Math.max(item.crm ? 8 : 2, item.crm / max * 100)}%` }} title={`${item.crm} conversaciones`} /><span className="growth" style={{ height: `${Math.max(item.growth ? 8 : 2, item.growth / max * 100)}%` }} title={`${item.growth} acciones de crecimiento`} /></div><small>{item.label}</small></div>)}</div></article><article className="panel owner-summary-status"><div className="panel-header"><div><p className="eyebrow">ESTADO OPERATIVO</p><h3>Disponibilidad del sistema</h3><p>Lo que debe estar listo para vender sin fricción.</p></div></div><div className="owner-status-card"><span className={`health-dot ${analytics.siteStatus}`} /><div><strong>Sitio web</strong><small>{analytics.siteStatus === "published" ? "Publicado y disponible" : "Pendiente de publicación"}</small></div><b>{analytics.siteStatus === "published" ? "Activo" : "Pendiente"}</b></div><div className="owner-status-card"><span className={`health-dot ${analytics.crmStatus}`} /><div><strong>CRM</strong><small>{analytics.crmStatus === "active" ? "Operando con datos reales" : "Sin actividad reciente"}</small></div><b>{analytics.crmStatus === "active" ? "Activo" : "Pendiente"}</b></div></article></div>
   </div>;
 }
-
 export function NotificationList({ items, onOpen, compact = false }: { items: OwnerNotification[]; onOpen: (item: OwnerNotification) => void; compact?: boolean }) {
   if (!items.length) return <p className="task-empty">No hay alertas.</p>;
   return <ul className={`owner-notifications${compact ? " compact" : ""}`}>
@@ -382,7 +400,7 @@ function DataControls({ data, onError, onSuccess, reload }: { data: Data; onErro
     finally { setSending(false); }
   }
 
-  return <div className="owner-center-grid">
+  return <div className="owner-center-grid owner-full-width">
     <article className="panel owner-danger">
       <div className="panel-header"><div><p className="eyebrow">SOLICITUDES DE LA EMPRESA</p><h3>Eliminación de datos o baja</h3><p>Las solicitudes se revisan manualmente. Nada se borra de forma automática.</p></div></div>
       {!isOwner ? <p className="owner-hint">Solo el propietario de la empresa puede enviar estas solicitudes.</p> : <form onSubmit={submit} className="owner-request-form">
