@@ -148,15 +148,37 @@ async function buildHealth(ctx: Ctx): Promise<{ items: HealthItem[]; site: Recor
 async function buildAnalytics(ctx: Ctx) {
   const now = Date.now();
   const from = new Date(now - 30 * 86400000).toISOString();
-  const [forms, conversations, contacts, deals, requests, site] = await Promise.all([
+  const [forms, conversations, contacts, deals, messages, requests, site] = await Promise.all([
     ctx.admin.from("site_form_submissions").select("created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
-    ctx.admin.from("conversations").select("created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("conversations").select("id,created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
     ctx.admin.from("contacts").select("created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
-    ctx.admin.from("deals").select("created_at,stage").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("deals").select("created_at,stage,value").eq("tenant_id", ctx.tenantId).gte("created_at", from).limit(5000),
+    ctx.admin.from("messages").select("conversation_id,direction,created_at").eq("tenant_id", ctx.tenantId).gte("created_at", from).order("created_at", { ascending: true }).limit(10000),
     ctx.admin.from("tenant_data_requests").select("created_at,request_type").eq("tenant_id", ctx.tenantId).gte("created_at", from).eq("request_type", "account_closure").limit(100),
     ctx.admin.from("site_projects").select("status,published_url,deployment_status").eq("tenant_id", ctx.tenantId).is("archived_at", null).maybeSingle()
   ]);
-  const formRows = forms.data || []; const conversationRows = conversations.data || []; const contactRows = contacts.data || []; const dealRows = deals.data || [];
+  const formRows = forms.data || [];
+  const conversationRows = conversations.data || [];
+  const contactRows = contacts.data || [];
+  const dealRows = deals.data || [];
+  const wonDeals = dealRows.filter(row => String(row.stage || "").toLowerCase() === "won");
+  const salesAmount = wonDeals.reduce((total, row) => total + Number(row.value || 0), 0);
+  const responseIntervals: number[] = [];
+  const pendingInbound = new Map<string, number>();
+  for (const row of messages.data || []) {
+    const conversationId = String(row.conversation_id || "");
+    const timestamp = new Date(row.created_at).getTime();
+    if (!conversationId || !Number.isFinite(timestamp)) continue;
+    if (row.direction === "inbound") pendingInbound.set(conversationId, timestamp);
+    if (row.direction === "outbound" && pendingInbound.has(conversationId)) {
+      const minutes = (timestamp - (pendingInbound.get(conversationId) || timestamp)) / 60000;
+      if (minutes >= 0 && minutes <= 7 * 24 * 60) responseIntervals.push(minutes);
+      pendingInbound.delete(conversationId);
+    }
+  }
+  const averageResponseMinutes = responseIntervals.length
+    ? Math.round(responseIntervals.reduce((sum, value) => sum + value, 0) / responseIntervals.length)
+    : null;
   const growth = contactRows.length + dealRows.length;
   const trend = Array.from({ length: 5 }, (_, index) => {
     const start = now - (5 - index) * 7 * 86400000;
@@ -171,13 +193,12 @@ async function buildAnalytics(ctx: Ctx) {
   });
   const published = site.data?.status === "published" || (site.data?.deployment_status === "ready" && Boolean(site.data?.published_url));
   return {
-    totals: { website: formRows.length, conversations: conversationRows.length, contacts: contactRows.length, opportunities: dealRows.length, growth, cancellations: (requests.data || []).length },
+    totals: { website: formRows.length, conversations: conversationRows.length, contacts: contactRows.length, leads: contactRows.length, opportunities: dealRows.length, sales: wonDeals.length, salesAmount, averageResponseMinutes, growth, cancellations: (requests.data || []).length },
     trend,
     siteStatus: published ? "published" : "unpublished",
     crmStatus: conversationRows.length || contactRows.length || dealRows.length ? "active" : "inactive"
   };
 }
-
 // ---------- GET ----------
 
 export async function GET(request: Request) {
