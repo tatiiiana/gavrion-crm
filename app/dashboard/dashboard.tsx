@@ -28,6 +28,8 @@ type PropertyInquiry = { id: string; customer_name: string; phone: string; inten
 type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" }; type Reservation = { id: string; customer_name: string; reservation_date: string; reservation_time: string; party_size: number; status: string }; type Appointment = { id: string; customer_name: string; service: string; scheduled_at: string; status: string };
 type SettingsTab = "control" | "empresa" | "canales" | "asistente";
 type TaskViewFilter = "mine" | "team" | "today" | "overdue" | "followups" | "conversations" | "forms";
+type DashboardGoals = { revenue: number; leads: number; responseMinutes: number };
+const defaultDashboardGoals: DashboardGoals = { revenue: 0, leads: 0, responseMinutes: 30 };
 const setupTabs: SettingsTab[] = ["empresa", "canales", "asistente"];
 
 function classifyTask(title: string): Task["source"] {
@@ -73,7 +75,10 @@ export default function Dashboard() {
   const [bellRefresh, setBellRefresh] = useState(0);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("30d");
-  const [dashboardMetrics, setDashboardMetrics] = useState({ contacts: 0, conversations: 0, deals: 0, won: 0, pipeline: 0 });
+  const [dashboardMetrics, setDashboardMetrics] = useState({ contacts: 0, conversations: 0, deals: 0, won: 0, pipeline: 0, wonValue: 0 });
+  const [dashboardGoals, setDashboardGoals] = useState<DashboardGoals>(defaultDashboardGoals);
+  const [tenantSettings, setTenantSettings] = useState<Record<string, unknown>>({});
+  const [savingDashboardGoals, setSavingDashboardGoals] = useState(false);
   const [activity, setActivity] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
   const [metricsVersion, setMetricsVersion] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
@@ -194,6 +199,18 @@ export default function Dashboard() {
           // También corrige empresas creadas antes de esta regla: el menú jamás
           // debe mezclar módulos de otros rubros aunque estén guardados en settings.
           setEnabledModules(configuredModulesForBusiness(tenant?.settings?.modules, tenant?.template_key));
+          const loadedSettings = tenant?.settings && typeof tenant.settings === "object" ? tenant.settings as Record<string, unknown> : {};
+          setTenantSettings(loadedSettings);
+          const storedGoals = loadedSettings.dashboard_goals;
+          if (storedGoals && typeof storedGoals === "object") {
+            const values = storedGoals as Record<string, unknown>;
+            const asGoal = (value: unknown, fallback: number) => typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : fallback;
+            setDashboardGoals({
+              revenue: asGoal(values.revenue, 0),
+              leads: asGoal(values.leads, 0),
+              responseMinutes: asGoal(values.responseMinutes, defaultDashboardGoals.responseMinutes)
+            });
+          }
 
           const [assistantResult, knowledgeResult] = await Promise.all([
             supabase.from("assistant_settings").select("enabled, assistant_name, instructions, handoff_message").eq("tenant_id", membership.tenant_id).maybeSingle(),
@@ -356,14 +373,14 @@ const taskSources = new Map<string, Task["source"]>();
       const dealRows = dealResult.data || [];
       const openDeals = dealRows.filter(deal => deal.stage !== "won");
       const wonDeals = dealRows.filter(deal => deal.stage === "won");
-      setDashboardMetrics({ contacts: contactResult.count || 0, conversations: conversationResult.count || 0, deals: dealRows.length, won: wonDeals.length, pipeline: openDeals.reduce((total, deal) => total + Number(deal.value || 0), 0) });
+      setDashboardMetrics({ contacts: contactResult.count || 0, conversations: conversationResult.count || 0, deals: dealRows.length, won: wonDeals.length, pipeline: openDeals.reduce((total, deal) => total + Number(deal.value || 0), 0), wonValue: wonDeals.reduce((total, deal) => total + Number(deal.value || 0), 0) });
       const sevenDays = Array.from({ length: 7 }, (_, index) => {
         const day = new Date(); day.setHours(0, 0, 0, 0); day.setDate(day.getDate() - (6 - index));
         return day.toISOString().slice(0, 10);
       });
       const counts = sevenDays.map(day => (conversationResult.data || []).filter(item => item.created_at?.slice(0, 10) === day).length + dealRows.filter(item => item.created_at?.slice(0, 10) === day).length);
       const max = Math.max(...counts, 1);
-      setActivity(counts.map(count => count === 0 ? 3 : Math.max(12, Math.round(count / max * 100))));
+      setActivity(counts.map(count => count === 0 ? 0 : Math.max(12, Math.round(count / max * 100))));
     });
   }, [tenantId, period, metricsVersion]);
 
@@ -430,6 +447,23 @@ const taskSources = new Map<string, Task["source"]>();
       return;
     }
     showNotice("success", next ? "Tarea asignada al integrante." : "Tarea dejada sin asignar.");
+  }
+  async function saveDashboardGoals(nextGoals: DashboardGoals) {
+    if (!tenantId || !isClientAdmin) return false;
+    const supabase = createClientSupabase();
+    if (!supabase) return false;
+    setSavingDashboardGoals(true);
+    const nextSettings = { ...tenantSettings, dashboard_goals: nextGoals };
+    const { error } = await supabase.from("tenants").update({ settings: nextSettings }).eq("id", tenantId);
+    setSavingDashboardGoals(false);
+    if (error) {
+      showNotice("error", "No se pudieron guardar las metas. Inténtalo de nuevo.");
+      return false;
+    }
+    setTenantSettings(nextSettings);
+    setDashboardGoals(nextGoals);
+    showNotice("success", "Metas ejecutivas actualizadas.");
+    return true;
   }
   function navigate(next: string) { setView(next); if (next !== "configuracion") setSettingsMenuOpen(false); window.scrollTo({ top: 0, behavior: "smooth" }); }
   function openSettings(tab: SettingsTab) { setSettingsTab(tab); setSettingsMenuOpen(true); navigate("configuracion"); }
@@ -663,7 +697,7 @@ const taskSources = new Map<string, Task["source"]>();
     else setPropertyVisits(current => current.map(item => item.id === id ? { ...item, status: status as PropertyVisit["status"] } : item));
     showNotice("success", "Estado actualizado.");
   }
-  const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", contactos: "Contactos", pipeline: "Pipeline comercial", pipeline_v2: "Pipeline comercial", tareas: "Tareas", calendario: "Calendario", inmobiliaria: "Gestión inmobiliaria", reservaciones:"Reservaciones", pedidos:"Pedidos", citas:"Citas", cotizaciones:"Cotizaciones", productos:"Productos", campos:"Campos personalizados", equipo: "Equipo y cuenta", automatizaciones: "Automatizaciones", reportes: "Reportes", auditoria: "Auditoría", configuracion: "Configuración" };
+  const labels: Record<string, string> = { inicio: `${greeting}, ${account.name.split(" ")[0]}`, conversaciones: "Conversaciones", contactos: "Contactos", pipeline: "Ventas y oportunidades", pipeline_v2: "Ventas y oportunidades", tareas: "Tareas", calendario: "Calendario", inmobiliaria: "Gestión inmobiliaria", reservaciones:"Reservaciones", pedidos:"Pedidos", citas:"Citas", cotizaciones:"Cotizaciones", productos:"Productos", campos:"Campos personalizados", equipo: "Equipo y cuenta", automatizaciones: "Automatizaciones", reportes: "Reportes", auditoria: "Auditoría", configuracion: "Configuración" };
   const globalResults = useMemo(() => {
     const query = globalQuery.trim().toLowerCase();
     if (!query) return [];
@@ -781,7 +815,7 @@ const taskSources = new Map<string, Task["source"]>();
           ["inicio", "⌂", "Inicio", "dashboard"],
           ["conversaciones", "◫", "Conversaciones", "conversations"],
           ["contactos", "♙", "Contactos", "contacts"],
-          ["pipeline_v2", "◇", "Ventas / Pipeline", "pipeline"],
+          ["pipeline_v2", "◇", "Ventas y oportunidades", "pipeline"],
           ["tareas", "✓", "Tareas", "tasks"],
           ["calendario", "◷", "Calendario", "tasks"],
           ["inmobiliaria", "▤", "Inmobiliaria", "properties"],
@@ -800,25 +834,21 @@ const taskSources = new Map<string, Task["source"]>();
     <main className="main">
       {supportMode&&<div className="support-mode-banner"><strong>Modo soporte:</strong> estás operando dentro de {account.company}. Todas las acciones quedan registradas.<a href="/admin">Volver al panel</a></div>}
       <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="topbar-actions"><div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div>{isClientAdmin&&<NotificationBell refreshKey={bellRefresh} onOpen={openOwnerNotification} onSeeAll={()=>openSettings("control")} />}</div></header>
-      {view === "inicio" && <section className="view active">
-        <div className="hero-row"><div><p className="eyebrow">PANEL EJECUTIVO</p><h2>Resumen de tu operación</h2><p>Objetivos, progreso y actividad de tu empresa en un solo lugar.</p></div><select className="select" aria-label="Filtrar periodo" value={period} onChange={e => setPeriod(e.target.value as Period)}><option value="30d">Últimos 30 días</option><option value="week">Esta semana</option><option value="year">Este año</option></select></div>
-        <div className="metrics-grid">{[
-          { label: "Contactos activos", value: dashboardMetrics.contacts.toLocaleString("es-HN"), detail: `Datos reales · ${periodLabels[period]}` },
-          { label: "Conversaciones", value: dashboardMetrics.conversations.toLocaleString("es-HN"), detail: `Datos reales · ${periodLabels[period]}` },
-          { label: "Oportunidades", value: dashboardMetrics.deals.toLocaleString("es-HN"), detail: `${dashboardMetrics.won} ganada${dashboardMetrics.won === 1 ? "" : "s"} · ${periodLabels[period]}` },
-          { label: "Pipeline abierto", value: new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL", maximumFractionDigits: 0 }).format(dashboardMetrics.pipeline), detail: `Excluye negocios ganados · ${periodLabels[period]}` }
-        ].map((metric, index) => <article className="metric-card" key={metric.label}><div className={`metric-icon ${["mint","blue","amber","rose"][index]}`}>{["♙","◫","◈","$"][index]}</div><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.detail}</small></article>)}</div>
-        <div className="dashboard-grid lower">
-          <article className="panel activity-placeholder"><div className="panel-header"><div><h3>Actividad comercial</h3><p>Conversaciones y oportunidades de los últimos 7 días</p></div></div><div className="bars">{activity.map((height,index)=><span key={index} style={{height:`${height}%`}} title={`${height <= 3 ? 0 : "Actividad registrada"}`} />)}</div></article>
-          <article className="panel tasks-panel">
-            <div className="panel-header"><div><h3>Tareas de hoy</h3><p>{tasks.length-completed} pendientes</p></div><button className="icon-button" aria-label="Agregar tarea" onClick={()=>setCreating(true)}>＋</button></div>
-            <div className="task-progress"><span style={{width:`${tasks.length ? completed/tasks.length*100 : 0}%`}} /></div>
-            {creating && <form className="quick-task-form" onSubmit={createTask}><input value={title} onChange={e=>setTitle(e.target.value)} autoFocus placeholder="Escribe una nueva tarea..."/><input type="time" value={time} onChange={e=>setTime(e.target.value)}/><button className="send-button">✓</button><button type="button" className="icon-button" onClick={()=>setCreating(false)}>×</button></form>}
-            <div>{dataLoading ? <p className="task-empty">Cargando tareas…</p> : visible.length ? visible.map(task => <div className={`task ${task.completed_at ? "done" : ""}`} key={task.id}><input aria-label={`Completar ${task.title}`} type="checkbox" checked={Boolean(task.completed_at)} onChange={()=>toggleTask(task)}/><span><strong>{task.title}</strong><small>{task.due_at?.slice(11,16) || "Sin hora"}</small></span><button className="task-delete persistent" aria-label={`Eliminar ${task.title}`} onClick={()=>deleteTask(task.id)}>×</button></div>) : <p className="task-empty">No hay tareas en este filtro.</p>}</div>
-            <div className="task-footer"><div className="task-filters">{(["all","pending","done"] as const).map(value=><button key={value} className={`task-filter ${filter===value?"active":""}`} onClick={()=>setFilter(value)}>{value==="all"?"Todas":value==="pending"?"Pendientes":"Completadas"}</button>)}</div><small>{completed} de {tasks.length} completadas</small></div>
-          </article>
-        </div>
-      </section>}
+      {view === "inicio" && <ExecutiveDashboard
+        metrics={dashboardMetrics}
+        activity={activity}
+        threads={threads}
+        tasks={tasks}
+        teamMembers={teamMembers}
+        deals={deals}
+        period={period}
+        goals={dashboardGoals}
+        canConfigure={isClientAdmin}
+        savingGoals={savingDashboardGoals}
+        onPeriodChange={setPeriod}
+        onSaveGoals={saveDashboardGoals}
+        onNavigate={navigate}
+      />}
 
 {view === "tareas" && <TasksView tasks={tasks} teamMembers={teamMembers} userId={userId} filter={taskViewFilter} onFilterChange={setTaskViewFilter} onToggle={toggleTask} onDelete={deleteTask} onCreate={addTask} onAssign={assignTask} canAssign={isClientAdmin || supportMode} />}
       {view === "calendario" && <CalendarView tasks={tasks} events={calendarEvents} enabledModules={enabledModules} onToggle={toggleTask} onDelete={deleteTask} onCreate={addTask} onUpdate={updateTask} />}
@@ -851,7 +881,7 @@ const taskSources = new Map<string, Task["source"]>();
 
       {view === "contactos" && <section className="view active"><div className="section-heading"><div><h2>Contactos</h2><p>Clientes y prospectos de tu empresa.</p></div><div className="section-actions"><button className="secondary-button" onClick={exportContacts}>Descargar CSV</button><button className="primary-button" onClick={openNewContact}>＋ Nuevo contacto</button></div></div>{showContactForm&&<form className="inline-create contact-create" onSubmit={saveContact}><input autoFocus required value={contactName} onChange={e=>setContactName(e.target.value)} placeholder="Nombre completo"/><input type="email" value={contactEmail} onChange={e=>setContactEmail(e.target.value)} placeholder="Correo"/><input value={contactPhone} onChange={e=>setContactPhone(e.target.value)} placeholder="Teléfono"/><input value={contactCompany} onChange={e=>setContactCompany(e.target.value)} placeholder="Empresa"/><select className="select" value={contactStatus} onChange={e=>setContactStatus(e.target.value as Contact["status"])} aria-label="Estado del contacto"><option>Prospecto</option><option>Cliente</option><option>Inactivo</option></select><button className="primary-button">{editingContactId ? "Actualizar" : "Guardar"}</button><button type="button" className="ghost-button" onClick={closeContactForm}>Cancelar</button></form>}<article className="panel table-panel"><div className="table-tools"><label className="search">⌕ <input value={contactQuery} onChange={e=>setContactQuery(e.target.value)} placeholder="Buscar contacto..."/></label></div><div className="table-scroll"><table><thead><tr><th>Contacto</th><th>Empresa</th><th>Teléfono</th><th>Estado</th><th>Acciones</th></tr><tr className="column-filters"><th><input aria-label="Filtrar por contacto" value={contactFilters.name} onChange={e=>setContactFilters(c=>({...c,name:e.target.value}))} placeholder="Filtrar" /></th><th><input aria-label="Filtrar por empresa" value={contactFilters.company} onChange={e=>setContactFilters(c=>({...c,company:e.target.value}))} placeholder="Filtrar" /></th><th><input aria-label="Filtrar por teléfono" value={contactFilters.phone} onChange={e=>setContactFilters(c=>({...c,phone:e.target.value}))} placeholder="Filtrar" /></th><th><select value={contactFilters.status} onChange={e=>setContactFilters(c=>({...c,status:e.target.value}))}><option value="">Todos</option><option>Prospecto</option><option>Cliente</option><option>Inactivo</option></select></th><th><button type="button" className="ghost-button" onClick={()=>setContactFilters({name:"",company:"",phone:"",status:""})}>Limpiar</button></th></tr></thead><tbody>{dataLoading ? <tr><td colSpan={5} className="table-empty">Cargando contactos…</td></tr> : filteredContacts.map(contact=><tr key={contact.id}><td><div className="contact-cell"><span className="avatar">{contact.name[0]}</span><span><strong>{contact.name}</strong><small>{contact.email || "Sin correo"}</small></span></div></td><td>{contact.company || "—"}</td><td>{contact.phone || "—"}</td><td><span className={`status ${contact.status==="Cliente"?"client":contact.status==="Inactivo"?"inactive":"lead"}`}>{contact.status}</span></td><td><div className="row-actions"><button className="ghost-button" onClick={()=>editContact(contact)}>Editar</button><button className="ghost-button" onClick={()=>navigate("conversaciones")}>Contactar</button><button className="danger-button" onClick={()=>deleteContact(contact.id)}>Eliminar</button></div></td></tr>)}</tbody></table></div></article></section>}
 
-      {view === "pipeline" && <section className="view active"><div className="section-heading"><div><h2>Pipeline comercial</h2><p>Oportunidades persistentes vinculadas a tus contactos.</p></div><button className="primary-button" onClick={openNewDeal}>＋ Nueva oportunidad</button></div>{showDealForm&&<form className="inline-create deal-create" onSubmit={saveDeal}><input required autoFocus value={dealTitle} onChange={e=>setDealTitle(e.target.value)} placeholder="Título de la oportunidad"/><select className="select" value={dealContactId} onChange={e=>setDealContactId(e.target.value)} aria-label="Contacto relacionado"><option value="">Sin contacto</option>{contacts.map(contact=><option value={contact.id} key={contact.id}>{contact.name}</option>)}</select><input required type="number" min="0" step="0.01" value={dealValue} onChange={e=>setDealValue(e.target.value)} placeholder="Valor en HNL"/><select className="select" value={dealStage} onChange={e=>setDealStage(e.target.value as DealStage)} aria-label="Etapa">{dealStages.map(stage=><option key={stage.id} value={stage.id}>{stage.label}</option>)}</select><input type="date" value={dealCloseDate} onChange={e=>setDealCloseDate(e.target.value)} aria-label="Fecha estimada de cierre"/><button className="primary-button">{editingDealId ? "Actualizar" : "Guardar"}</button><button type="button" className="ghost-button" onClick={closeDealForm}>Cancelar</button></form>}<div className="kanban">{dealStages.map(stage=><div className="kanban-column" key={stage.id}><div className="kanban-title">{stage.label}<span>{deals.filter(deal=>deal.stage===stage.id).length}</span></div>{deals.filter(deal=>deal.stage===stage.id).map(deal=><article className="deal-card" key={deal.id}><h4>{deal.title}</h4><p>{deal.contactName}</p>{deal.expectedCloseDate&&<small>Cierre: {new Date(`${deal.expectedCloseDate}T00:00:00`).toLocaleDateString("es-HN")}</small>}<div className="deal-footer"><strong>{new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL", maximumFractionDigits: 0 }).format(deal.value)}</strong><div className="deal-actions"><button className="ghost-button" onClick={()=>editDeal(deal)}>Editar</button>{stage.id!=="won"&&<button className="ghost-button" onClick={()=>moveDeal(deal)}>Avanzar →</button>}<button className="danger-button" onClick={()=>deleteDeal(deal.id)}>×</button></div></div></article>)}{!dataLoading&&!deals.some(deal=>deal.stage===stage.id)&&<p className="kanban-empty">Sin oportunidades</p>}</div>)}</div></section>}
+      {view === "pipeline" && <section className="view active"><div className="section-heading"><div><h2>Ventas y oportunidades</h2><p>Oportunidades persistentes vinculadas a tus contactos.</p></div><button className="primary-button" onClick={openNewDeal}>＋ Nueva oportunidad</button></div>{showDealForm&&<form className="inline-create deal-create" onSubmit={saveDeal}><input required autoFocus value={dealTitle} onChange={e=>setDealTitle(e.target.value)} placeholder="Título de la oportunidad"/><select className="select" value={dealContactId} onChange={e=>setDealContactId(e.target.value)} aria-label="Contacto relacionado"><option value="">Sin contacto</option>{contacts.map(contact=><option value={contact.id} key={contact.id}>{contact.name}</option>)}</select><input required type="number" min="0" step="0.01" value={dealValue} onChange={e=>setDealValue(e.target.value)} placeholder="Valor en HNL"/><select className="select" value={dealStage} onChange={e=>setDealStage(e.target.value as DealStage)} aria-label="Etapa">{dealStages.map(stage=><option key={stage.id} value={stage.id}>{stage.label}</option>)}</select><input type="date" value={dealCloseDate} onChange={e=>setDealCloseDate(e.target.value)} aria-label="Fecha estimada de cierre"/><button className="primary-button">{editingDealId ? "Actualizar" : "Guardar"}</button><button type="button" className="ghost-button" onClick={closeDealForm}>Cancelar</button></form>}<div className="kanban">{dealStages.map(stage=><div className="kanban-column" key={stage.id}><div className="kanban-title">{stage.label}<span>{deals.filter(deal=>deal.stage===stage.id).length}</span></div>{deals.filter(deal=>deal.stage===stage.id).map(deal=><article className="deal-card" key={deal.id}><h4>{deal.title}</h4><p>{deal.contactName}</p>{deal.expectedCloseDate&&<small>Cierre: {new Date(`${deal.expectedCloseDate}T00:00:00`).toLocaleDateString("es-HN")}</small>}<div className="deal-footer"><strong>{new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL", maximumFractionDigits: 0 }).format(deal.value)}</strong><div className="deal-actions"><button className="ghost-button" onClick={()=>editDeal(deal)}>Editar</button>{stage.id!=="won"&&<button className="ghost-button" onClick={()=>moveDeal(deal)}>Avanzar →</button>}<button className="danger-button" onClick={()=>deleteDeal(deal.id)}>×</button></div></div></article>)}{!dataLoading&&!deals.some(deal=>deal.stage===stage.id)&&<p className="kanban-empty">Sin oportunidades</p>}</div>)}</div></section>}
 
       {view === "automatizaciones" && isClientAdmin && <AutomationsView />}
 
@@ -872,6 +902,149 @@ const taskSources = new Map<string, Task["source"]>();
   </div>;
 }
 
+type ExecutiveDashboardProps = {
+  metrics: { contacts: number; conversations: number; deals: number; won: number; pipeline: number; wonValue: number };
+  activity: number[];
+  threads: Thread[];
+  tasks: Task[];
+  teamMembers: TeamMember[];
+  deals: Deal[];
+  period: Period;
+  goals: DashboardGoals;
+  canConfigure: boolean;
+  savingGoals: boolean;
+  onPeriodChange: (period: Period) => void;
+  onSaveGoals: (goals: DashboardGoals) => Promise<boolean>;
+  onNavigate: (view: string) => void;
+};
+
+function formatExecutiveCurrency(value: number) {
+  return new Intl.NumberFormat("es-HN", { style: "currency", currency: "HNL", maximumFractionDigits: 0 }).format(value);
+}
+
+function percentOf(value: number, total: number) {
+  return total > 0 ? Math.min(100, Math.round(value / total * 100)) : 0;
+}
+
+function ExecutiveDashboard({ metrics, activity, threads, tasks, teamMembers, deals, period, goals, canConfigure, savingGoals, onPeriodChange, onSaveGoals, onNavigate }: ExecutiveDashboardProps) {
+  const [editingGoals, setEditingGoals] = useState(false);
+  const [draftGoals, setDraftGoals] = useState({ revenue: String(goals.revenue || ""), leads: String(goals.leads || ""), responseMinutes: String(goals.responseMinutes || defaultDashboardGoals.responseMinutes) });
+
+  useEffect(() => {
+    setDraftGoals({ revenue: String(goals.revenue || ""), leads: String(goals.leads || ""), responseMinutes: String(goals.responseMinutes || defaultDashboardGoals.responseMinutes) });
+  }, [goals]);
+
+  const averageResponseMinutes = useMemo(() => {
+    const responseTimes: number[] = [];
+    threads.forEach(thread => {
+      const messages = [...thread.messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+      messages.forEach((message, index) => {
+        if (message.direction !== "inbound") return;
+        const reply = messages.slice(index + 1).find(candidate => candidate.direction === "outbound");
+        if (!reply) return;
+        const minutes = (new Date(reply.createdAt).getTime() - new Date(message.createdAt).getTime()) / 60000;
+        if (Number.isFinite(minutes) && minutes >= 0 && minutes <= 7 * 24 * 60) responseTimes.push(minutes);
+      });
+    });
+    if (!responseTimes.length) return null;
+    return Math.round(responseTimes.reduce((total, value) => total + value, 0) / responseTimes.length);
+  }, [threads]);
+
+  const channelPerformance = useMemo(() => {
+    const values = new Map<string, { conversations: number; pending: number }>();
+    threads.forEach(thread => {
+      const item = values.get(thread.channel) || { conversations: 0, pending: 0 };
+      item.conversations += 1;
+      item.pending += thread.unread > 0 || thread.handlingMode === "waiting_agent" ? 1 : 0;
+      values.set(thread.channel, item);
+    });
+    return Array.from(values.entries()).map(([channel, value]) => ({ channel, ...value })).sort((a, b) => b.conversations - a.conversations).slice(0, 4);
+  }, [threads]);
+
+  const openDeals = deals.filter(deal => deal.stage !== "won");
+  const stageCount = (stage: DealStage) => deals.filter(deal => deal.stage === stage).length;
+  const funnel = [
+    { label: "Contactos", value: metrics.contacts, tone: "lead" },
+    { label: "Conversaciones", value: metrics.conversations, tone: "conversation" },
+    { label: "Nuevas", value: stageCount("new"), tone: "new" },
+    { label: "Propuesta", value: stageCount("proposal"), tone: "proposal" },
+    { label: "Ganadas", value: metrics.won, tone: "won" }
+  ];
+  const funnelPeak = Math.max(...funnel.map(item => item.value), 1);
+  const overdueTasks = tasks.filter(task => !task.completed_at && task.due_at && new Date(task.due_at).getTime() < Date.now());
+  const attentionThreads = threads.filter(thread => thread.unread > 0 || thread.handlingMode === "waiting_agent");
+  const salesProgress = goals.revenue > 0 ? percentOf(metrics.wonValue, goals.revenue) : null;
+  const leadsProgress = goals.leads > 0 ? percentOf(metrics.contacts, goals.leads) : null;
+  const responseOnTarget = averageResponseMinutes === null ? null : averageResponseMinutes <= goals.responseMinutes;
+  const completedTasks = tasks.filter(task => task.completed_at).length;
+  const taskProgress = tasks.length ? percentOf(completedTasks, tasks.length) : 0;
+  const weekdayLabels = ["L", "M", "X", "J", "V", "S", "D"];
+  const activeTeam = teamMembers.filter(member => member.active !== false && member.invitationStatus !== "pending").slice(0, 4);
+  const highestWorkload = Math.max(...activeTeam.map(member => (member.workload?.conversations || 0) + (member.workload?.tasks || 0) + (member.workload?.deals || 0)), 1);
+
+  async function submitGoals(event: FormEvent) {
+    event.preventDefault();
+    const nextGoals: DashboardGoals = {
+      revenue: Math.max(0, Number(draftGoals.revenue) || 0),
+      leads: Math.max(0, Number(draftGoals.leads) || 0),
+      responseMinutes: Math.max(1, Number(draftGoals.responseMinutes) || defaultDashboardGoals.responseMinutes)
+    };
+    if (await onSaveGoals(nextGoals)) setEditingGoals(false);
+  }
+
+  const decisionAlerts = [
+    attentionThreads.length ? { tone: "urgent", eyebrow: "Atención comercial", title: `${attentionThreads.length} conversación${attentionThreads.length === 1 ? " requiere" : "es requieren"} respuesta`, description: "Prioriza los mensajes con un agente para no perder oportunidades.", action: "Abrir conversaciones", target: "conversaciones" } : null,
+    overdueTasks.length ? { tone: "warning", eyebrow: "Seguimientos", title: `${overdueTasks.length} tarea${overdueTasks.length === 1 ? " vencida" : "s vencidas"}`, description: "Reasigna o completa las tareas atrasadas para recuperar el ritmo comercial.", action: "Ver tareas", target: "tareas" } : null,
+    salesProgress !== null && salesProgress < 60 ? { tone: "warning", eyebrow: "Meta de ventas", title: `Vas en ${salesProgress}% de la meta`, description: `Faltan ${formatExecutiveCurrency(Math.max(0, goals.revenue - metrics.wonValue))} para alcanzar el objetivo definido.`, action: "Revisar ventas", target: "pipeline_v2" } : null,
+    responseOnTarget === false ? { tone: "warning", eyebrow: "Tiempo de respuesta", title: `Promedio de ${averageResponseMinutes} min`, description: `Supera la meta de ${goals.responseMinutes} min. Revisa asignaciones y automatizaciones.`, action: "Ver conversaciones", target: "conversaciones" } : null
+  ].filter(Boolean) as { tone: string; eyebrow: string; title: string; description: string; action: string; target: string }[];
+
+  return <section className="view active executive-dashboard">
+    <div className="executive-hero">
+      <div className="executive-hero-copy">
+        <span className="executive-kicker"><i /> PANEL EJECUTIVO</span>
+        <h2>Decisiones claras para hacer crecer {" "}<em>tu empresa.</em></h2>
+        <p>Una lectura estratégica de ventas, demanda, servicio y ritmo operativo con datos reales de {periodLabels[period]}.</p>
+      </div>
+      <div className="executive-hero-actions">
+        <label className="executive-period"><span>Periodo</span><select value={period} onChange={event => onPeriodChange(event.target.value as Period)}><option value="30d">Últimos 30 días</option><option value="week">Esta semana</option><option value="year">Este año</option></select></label>
+        {canConfigure && <button type="button" className="executive-goal-button" onClick={() => setEditingGoals(true)}>◎ Configurar metas</button>}
+      </div>
+    </div>
+
+    {editingGoals && canConfigure && <form className="executive-goal-form" onSubmit={submitGoals}>
+      <div><span className="eyebrow">METAS DEL PERIODO</span><h3>Define la referencia para tomar decisiones</h3><p>Estas metas pertenecen solamente a tu empresa y permiten medir el avance real del panel.</p></div>
+      <label>Meta de ventas (HNL)<input type="number" min="0" step="100" value={draftGoals.revenue} onChange={event => setDraftGoals(current => ({ ...current, revenue: event.target.value }))} placeholder="Ej. 250000" /></label>
+      <label>Meta de nuevos contactos<input type="number" min="0" step="1" value={draftGoals.leads} onChange={event => setDraftGoals(current => ({ ...current, leads: event.target.value }))} placeholder="Ej. 80" /></label>
+      <label>Respuesta máxima (min)<input type="number" min="1" step="1" value={draftGoals.responseMinutes} onChange={event => setDraftGoals(current => ({ ...current, responseMinutes: event.target.value }))} /></label>
+      <div className="executive-goal-actions"><button className="primary-button" disabled={savingGoals}>{savingGoals ? "Guardando…" : "Guardar metas"}</button><button type="button" className="ghost-button" onClick={() => setEditingGoals(false)}>Cancelar</button></div>
+    </form>}
+
+    <div className="executive-metric-grid">
+      <article className="executive-metric-card revenue"><span className="executive-card-icon">↗</span><div><p>Ventas cerradas</p><strong>{formatExecutiveCurrency(metrics.wonValue)}</strong><small>{metrics.won} ganada{metrics.won === 1 ? "" : "s"} · {periodLabels[period]}</small></div><button type="button" onClick={() => onNavigate("pipeline_v2")}>Ver ventas →</button></article>
+      <article className="executive-metric-card pipeline"><span className="executive-card-icon">◇</span><div><p>Pipeline activo</p><strong>{formatExecutiveCurrency(metrics.pipeline)}</strong><small>{openDeals.length} venta{openDeals.length === 1 ? "" : "s"} en curso</small></div><button type="button" onClick={() => onNavigate("pipeline_v2")}>Gestionar →</button></article>
+      <article className="executive-metric-card demand"><span className="executive-card-icon">◌</span><div><p>Demanda captada</p><strong>{metrics.contacts.toLocaleString("es-HN")}</strong><small>{metrics.conversations} conversaciones iniciadas</small></div><button type="button" onClick={() => onNavigate("contactos")}>Ver contactos →</button></article>
+      <article className="executive-metric-card service"><span className="executive-card-icon">◷</span><div><p>Tiempo de respuesta</p><strong>{averageResponseMinutes === null ? "Sin datos" : `${averageResponseMinutes} min`}</strong><small>{averageResponseMinutes === null ? "Se medirá al responder mensajes" : responseOnTarget ? "Dentro de la meta" : "Requiere atención"}</small></div><button type="button" onClick={() => onNavigate("conversaciones")}>Ver bandeja →</button></article>
+    </div>
+
+    <div className="executive-goals-grid">
+      <article className="executive-goal-card"><div className="executive-goal-top"><span>Meta de ventas</span><strong>{salesProgress === null ? "Sin definir" : `${salesProgress}%`}</strong></div><div className="executive-progress"><i style={{ width: `${salesProgress ?? 0}%` }} /></div><div className="executive-goal-detail"><span>{formatExecutiveCurrency(metrics.wonValue)} cerrados</span><span>{goals.revenue > 0 ? `de ${formatExecutiveCurrency(goals.revenue)}` : "Configura una meta"}</span></div></article>
+      <article className="executive-goal-card"><div className="executive-goal-top"><span>Meta de nuevos contactos</span><strong>{leadsProgress === null ? "Sin definir" : `${leadsProgress}%`}</strong></div><div className="executive-progress violet"><i style={{ width: `${leadsProgress ?? 0}%` }} /></div><div className="executive-goal-detail"><span>{metrics.contacts} contactos captados</span><span>{goals.leads > 0 ? `de ${goals.leads}` : "Configura una meta"}</span></div></article>
+      <article className="executive-goal-card"><div className="executive-goal-top"><span>Ritmo operativo</span><strong>{taskProgress}%</strong></div><div className="executive-progress amber"><i style={{ width: `${taskProgress}%` }} /></div><div className="executive-goal-detail"><span>{completedTasks} tareas completadas</span><span>{tasks.length} planificadas</span></div></article>
+    </div>
+
+    <div className="executive-insights-grid">
+      <article className="panel executive-funnel-panel"><div className="executive-panel-header"><div><span className="eyebrow">CONVERSIÓN</span><h3>Embudo comercial actual</h3><p>Del interés inicial al cierre de una venta.</p></div><button type="button" className="text-action" onClick={() => onNavigate("pipeline_v2")}>Abrir ventas y oportunidades →</button></div><div className="executive-funnel">{funnel.map((step, index) => <div className="funnel-row" key={step.label}><div className="funnel-label"><span>{String(index + 1).padStart(2, "0")}</span><strong>{step.label}</strong><em>{step.value}</em></div><div className="funnel-track"><i className={step.tone} style={{ width: `${Math.max(step.value ? 12 : 0, percentOf(step.value, funnelPeak))}%` }} /></div></div>)}</div></article>
+      <article className="panel executive-trend-panel"><div className="executive-panel-header"><div><span className="eyebrow">TENDENCIA</span><h3>Actividad de los últimos 7 días</h3><p>Mensajes y oportunidades generadas por día.</p></div><span className="executive-live"><i /> En seguimiento</span></div><div className="executive-trend-bars">{activity.map((height, index) => <div className="executive-trend-day" key={index}><div className="executive-bar-rail"><i style={{ height: `${height}%` }} /></div><span>{weekdayLabels[index]}</span></div>)}</div><div className="executive-trend-footer"><span>Usa esta tendencia para anticipar picos de atención.</span><button type="button" onClick={() => onNavigate("reportes")}>Ver reportes →</button></div></article>
+    </div>
+
+    <div className="executive-operations-grid">
+      <article className="panel executive-channel-panel"><div className="executive-panel-header"><div><span className="eyebrow">CANALES</span><h3>Rendimiento por canal</h3></div><button type="button" className="text-action" onClick={() => onNavigate("conversaciones")}>Bandeja →</button></div>{channelPerformance.length ? <div className="executive-channel-list">{channelPerformance.map(item => <div key={item.channel}><span className="channel-initial">{item.channel.slice(0, 1)}</span><strong>{item.channel}</strong><span>{item.conversations} conversación{item.conversations === 1 ? "" : "es"}</span><em className={item.pending ? "needs-attention" : "on-track"}>{item.pending ? `${item.pending} pendiente${item.pending === 1 ? "" : "s"}` : "Al día"}</em></div>)}</div> : <div className="executive-empty-state"><span>◌</span><p>Aún no hay conversaciones registradas por canal.</p></div>}</article>
+      <article className="panel executive-team-panel"><div className="executive-panel-header"><div><span className="eyebrow">EQUIPO</span><h3>Capacidad de atención</h3></div><button type="button" className="text-action" onClick={() => onNavigate("equipo")}>Ver equipo →</button></div>{activeTeam.length ? <div className="executive-team-list">{activeTeam.map(member => { const workload = (member.workload?.conversations || 0) + (member.workload?.tasks || 0) + (member.workload?.deals || 0); return <div className="executive-team-member" key={member.id}><span className={`avatar ${member.online ? "online" : ""}`}>{member.name.slice(0, 1).toUpperCase()}</span><div><strong>{member.name}</strong><small>{workload ? `${workload} elementos activos` : "Sin carga registrada"}</small><i><b style={{ width: `${percentOf(workload, highestWorkload)}%` }} /></i></div><em>{member.online ? "En línea" : member.role === "owner" ? "Propietario" : "Equipo"}</em></div>; })}</div> : <div className="executive-empty-state"><span>◌</span><p>Invita a tu equipo para medir la capacidad de atención.</p></div>}</article>
+      <article className="panel executive-alerts-panel"><div className="executive-panel-header"><div><span className="eyebrow">DECISIONES</span><h3>Alertas que importan</h3></div><span className={`executive-alert-count ${decisionAlerts.length ? "active" : ""}`}>{decisionAlerts.length}</span></div>{decisionAlerts.length ? <div className="executive-alert-list">{decisionAlerts.slice(0, 3).map(alert => <article className={alert.tone} key={alert.title}><div><span>{alert.eyebrow}</span><strong>{alert.title}</strong><p>{alert.description}</p></div><button type="button" onClick={() => onNavigate(alert.target)}>{alert.action} →</button></article>)}</div> : <div className="executive-good-state"><span>✓</span><strong>Todo está encaminado</strong><p>No hay alertas prioritarias para este periodo.</p></div>}</article>
+    </div>
+  </section>;
+}
 type TaskCenterProps = {
   tasks: Task[];
   teamMembers: TeamMember[];
