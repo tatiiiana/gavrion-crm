@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { CalendarEvent, Contact, Deal, DealStage, Period, Task } from "@/types/crm";
+import type { Contact, Deal, DealStage, Period, Task } from "@/types/crm";
 import { createClientSupabase } from "@/lib/supabase/client";
 import { AutomationsView } from "./automations";
 import { ReportsView } from "./reports";
@@ -15,6 +15,8 @@ import { AccountTab, OwnerCenter, type OwnerNotification } from "./owner-center"
 import { NotificationBell } from "./notification-bell";
 import { downloadCsv } from "./export-utils";
 import { configuredModulesForBusiness } from "@/lib/business-modules";
+type CalendarEventKind = "task" | "reservation" | "appointment" | "property_visit" | "external";
+type CalendarEvent = { id: string; kind: CalendarEventKind; title: string; start: string; end?: string | null; detail?: string; status?: string | null; sourceId?: string; editable?: boolean };
 
 const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últimos 30 días", year: "este año" };
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
