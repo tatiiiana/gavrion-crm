@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import type { Contact, Deal, DealStage, Period, Task } from "@/types/crm";
+import type { CalendarEvent, Contact, Deal, DealStage, Period, Task } from "@/types/crm";
 import { createClientSupabase } from "@/lib/supabase/client";
 import { AutomationsView } from "./automations";
 import { ReportsView } from "./reports";
@@ -23,7 +23,7 @@ type Thread = { id: string; name: string; channel: string; preview: string; cont
 type TeamMember = { id: string; name: string; email: string; role: "owner" | "admin" | "agent" | "viewer"; active?:boolean; invitationStatus?:string; invitedAt?: string | null; lastSeenAt?: string | null; online?: boolean; workload?:{conversations:number;tasks:number;deals:number} };
 type Property = { id: string; reference: string; title: string; property_type: string; operation: "sale" | "rent"; price: number; currency: string; city: string; zone: string | null; bedrooms: number | null; status: "available" | "reserved" | "sold" | "rented" | "inactive" };
 type PropertyInquiry = { id: string; customer_name: string; phone: string; intent: "buy" | "rent" | "sell"; property_type: string | null; city: string | null; zone: string | null; budget_max: number | null; bedrooms: number | null; notes: string | null; status: "new" | "contacted" | "qualified" | "closed" | "discarded" };
-type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" };
+type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" }; type Reservation = { id: string; customer_name: string; reservation_date: string; reservation_time: string; party_size: number; status: string }; type Appointment = { id: string; customer_name: string; service: string; scheduled_at: string; status: string };
 type SettingsTab = "control" | "empresa" | "canales" | "asistente";
 type TaskViewFilter = "mine" | "team" | "today" | "overdue" | "followups" | "conversations" | "forms";
 const setupTabs: SettingsTab[] = ["empresa", "canales", "asistente"];
@@ -74,7 +74,7 @@ export default function Dashboard() {
   const [dashboardMetrics, setDashboardMetrics] = useState({ contacts: 0, conversations: 0, deals: 0, won: 0, pipeline: 0 });
   const [activity, setActivity] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
   const [metricsVersion, setMetricsVersion] = useState(0);
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [filter, setFilter] = useState<"all" | "pending" | "done">("all");
   const [taskViewFilter, setTaskViewFilter] = useState<TaskViewFilter>("mine");
   const [creating, setCreating] = useState(false);
@@ -205,7 +205,7 @@ export default function Dashboard() {
           }
           if (knowledgeResult.data) { setKnowledgeId(knowledgeResult.data.id); setKnowledgeContent(knowledgeResult.data.content); }
 
-          const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult, propertiesResult, inquiriesResult, visitsResult, formTasksResult, inquiryTasksResult] = await Promise.all([
+          const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult, propertiesResult, inquiriesResult, visitsResult, formTasksResult, inquiryTasksResult, reservationsResult, appointmentsResult] = await Promise.all([
             supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
             supabase.from("tasks").select("id, title, due_at, completed_at, assigned_to").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }),
             supabase.from("deals").select("id, title, stage, value, currency, contact_id, expected_close_date").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
@@ -215,7 +215,9 @@ export default function Dashboard() {
             supabase.from("property_inquiries").select("id, customer_name, phone, intent, property_type, city, zone, budget_max, bedrooms, notes, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
             supabase.from("property_visits").select("id, property_reference, customer_name, phone, requested_date, requested_time, party_size, notes, status").eq("tenant_id", membership.tenant_id).order("requested_date", { ascending: true }),
             supabase.from("site_form_submissions").select("task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("task_id", "is", null).limit(5000),
-            supabase.from("property_inquiries").select("follow_up_task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("follow_up_task_id", "is", null).limit(5000)
+            supabase.from("property_inquiries").select("follow_up_task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("follow_up_task_id", "is", null).limit(5000),
+            supabase.from("reservations").select("id, customer_name, reservation_date, reservation_time, party_size, status").eq("tenant_id", membership.tenant_id).order("reservation_date", { ascending: true }).limit(1000),
+            supabase.from("appointments").select("id, customer_name, service, scheduled_at, status").eq("tenant_id", membership.tenant_id).order("scheduled_at", { ascending: true }).limit(1000)
           ]);
           if (contactsResult.error || tasksResult.error || dealsResult.error || conversationsResult.error || messagesResult.error || propertiesResult.error || inquiriesResult.error || visitsResult.error) {
             setNotice({ type: "error", text: contactsResult.error?.message || tasksResult.error?.message || dealsResult.error?.message || conversationsResult.error?.message || messagesResult.error?.message || propertiesResult.error?.message || inquiriesResult.error?.message || visitsResult.error?.message || "No fue posible cargar los datos." });
@@ -230,7 +232,13 @@ const taskSources = new Map<string, Task["source"]>();
             setProperties((propertiesResult.data || []).map(item => ({ ...item, price: Number(item.price || 0) })) as Property[]);
             setPropertyInquiries((inquiriesResult.data || []).map(item => ({ ...item, budget_max: item.budget_max == null ? null : Number(item.budget_max) })) as PropertyInquiry[]);
             setPropertyVisits((visitsResult.data || []) as PropertyVisit[]);
-            setDeals((dealsResult.data || []).map(item => ({ id: item.id, title: item.title, stage: (dealStages.some(stage => stage.id === item.stage) ? item.stage : "new") as DealStage, value: Number(item.value || 0), currency: item.currency || "HNL", contactId: item.contact_id || "", contactName: loadedContacts.find(contact => contact.id === item.contact_id)?.name || "Sin contacto", expectedCloseDate: item.expected_close_date || "" })));
+
+            const operationalEvents: CalendarEvent[] = [
+              ...(reservationsResult.data || []).map(item => ({ id: "reservation-" + item.id, kind: "reservation" as const, title: "Reserva · " + item.customer_name, start: String(item.reservation_date) + "T" + String(item.reservation_time).slice(0, 8), detail: String(item.party_size) + " personas", status: item.status, sourceId: item.id, editable: false })),
+              ...(appointmentsResult.data || []).map(item => ({ id: "appointment-" + item.id, kind: "appointment" as const, title: "Cita · " + item.customer_name, start: item.scheduled_at, detail: item.service, status: item.status, sourceId: item.id, editable: false })),
+              ...(visitsResult.data || []).map(item => ({ id: "visit-" + item.id, kind: "property_visit" as const, title: "Visita · " + item.customer_name, start: String(item.requested_date) + "T" + String(item.requested_time).slice(0, 8), detail: item.property_reference || "Propiedad", status: item.status, sourceId: item.id, editable: false }))
+            ];
+            setCalendarEvents(operationalEvents);            setDeals((dealsResult.data || []).map(item => ({ id: item.id, title: item.title, stage: (dealStages.some(stage => stage.id === item.stage) ? item.stage : "new") as DealStage, value: Number(item.value || 0), currency: item.currency || "HNL", contactId: item.contact_id || "", contactName: loadedContacts.find(contact => contact.id === item.contact_id)?.name || "Sin contacto", expectedCloseDate: item.expected_close_date || "" })));
             const allMessages = messagesResult.data || [];
             const channelLabels: Record<string, string> = { whatsapp: "WhatsApp", instagram: "Instagram", facebook: "Facebook", web: "Chat web" };
             setThreads((conversationsResult.data || []).map(conversation => {
@@ -357,17 +365,29 @@ const taskSources = new Map<string, Task["source"]>();
     });
   }, [tenantId, period, metricsVersion]);
 
-  async function addTask(taskTitle: string, taskTime: string) {
+  async function addTask(taskTitle: string, taskTime: string, taskDate = localDateKey(new Date())) {
     if (!taskTitle.trim() || !tenantId) return;
     const supabase = createClientSupabase();
     if (!supabase) return;
-    const dueAt = `${new Date().toISOString().slice(0, 10)}T${taskTime}:00`;
+    const dueAt = localDateTimeToIso(taskDate, taskTime);
     const { data, error } = await supabase.from("tasks").insert({ tenant_id: tenantId, title: taskTitle.trim(), due_at: dueAt, assigned_to: userId || null }).select("id, title, due_at, completed_at, assigned_to").single();
     if (error) { showNotice("error", `No se pudo guardar la tarea: ${error.message}`); return; }
     setTasks(current => [{ ...(data as Task), source: "manual" }, ...current]);
     showNotice("success", "Tarea guardada en Supabase.");
   }
 
+  async function updateTask(taskId: string, taskTitle: string, dueAt: string) {
+    if (!taskTitle.trim() || !tenantId) return;
+    const supabase = createClientSupabase();
+    if (!supabase) return;
+    const previous = tasks.find(task => task.id === taskId);
+    setTasks(current => current.map(task => task.id === taskId ? { ...task, title: taskTitle.trim(), due_at: dueAt } : task));
+    const { error } = await supabase.from("tasks").update({ title: taskTitle.trim(), due_at: dueAt }).eq("id", taskId).eq("tenant_id", tenantId);
+    if (error) {
+      if (previous) setTasks(current => current.map(task => task.id === taskId ? previous : task));
+      showNotice("error", `No se pudo editar la tarea: ${error.message}`);
+    } else showNotice("success", "Tarea actualizada.");
+  }
   async function createTask(event: FormEvent) {
     event.preventDefault();
     if (!title.trim()) return;
@@ -784,7 +804,7 @@ const taskSources = new Map<string, Task["source"]>();
       </section>}
 
 {view === "tareas" && <TasksView tasks={tasks} teamMembers={teamMembers} userId={userId} filter={taskViewFilter} onFilterChange={setTaskViewFilter} onToggle={toggleTask} onDelete={deleteTask} onCreate={addTask} />}
-      {view === "calendario" && <CalendarView tasks={tasks} onToggle={toggleTask} />}
+      {view === "calendario" && <CalendarView tasks={tasks} events={calendarEvents} enabledModules={enabledModules} onToggle={toggleTask} onDelete={deleteTask} onCreate={addTask} onUpdate={updateTask} />}
       {view === "conversaciones" && <section className="view active">
         <div className="section-heading"><div><h2>Bandeja unificada</h2><p>{totalUnread ? `${totalUnread} mensaje${totalUnread===1?"":"s"} sin leer` : "Todas las conversaciones están al día"}.</p></div><div className="section-actions"><button className="secondary-button" onClick={exportConversations}>Descargar CSV</button><button className="secondary-button" onClick={enableNotifications}>Activar notificaciones</button></div></div>
         {currentThread ? <div className="inbox-layout">
@@ -806,7 +826,7 @@ const taskSources = new Map<string, Task["source"]>();
       {view === "inmobiliaria" && <section className="view active"><div className="section-heading"><div><h2>Gestión inmobiliaria</h2><p>Inventario, clientes interesados y visitas registradas por el asistente.</p></div><button className="primary-button" onClick={()=>setShowPropertyForm(true)}>＋ Nuevo inmueble</button></div>{showPropertyForm&&<form className="inline-create property-create" onSubmit={saveProperty}><input required autoFocus value={propertyReference} onChange={e=>setPropertyReference(e.target.value)} placeholder="Referencia: MET-001"/><input required value={propertyTitle} onChange={e=>setPropertyTitle(e.target.value)} placeholder="Título del inmueble"/><select className="select" value={propertyType} onChange={e=>setPropertyType(e.target.value)}><option value="house">Casa</option><option value="apartment">Apartamento</option><option value="land">Terreno</option><option value="commercial">Local comercial</option><option value="office">Oficina</option><option value="other">Otro</option></select><select className="select" value={propertyOperation} onChange={e=>setPropertyOperation(e.target.value as "sale"|"rent")}><option value="sale">Venta</option><option value="rent">Alquiler</option></select><input required type="number" min="0" value={propertyPrice} onChange={e=>setPropertyPrice(e.target.value)} placeholder="Precio HNL"/><input required value={propertyCity} onChange={e=>setPropertyCity(e.target.value)} placeholder="Ciudad"/><input value={propertyZone} onChange={e=>setPropertyZone(e.target.value)} placeholder="Zona o colonia"/><input type="number" min="0" value={propertyBedrooms} onChange={e=>setPropertyBedrooms(e.target.value)} placeholder="Habitaciones"/><button className="primary-button">Guardar</button><button type="button" className="ghost-button" onClick={()=>setShowPropertyForm(false)}>Cancelar</button></form>}<div className="requests-grid"><article className="panel table-panel"><div className="panel-header"><div><h3>Propiedades</h3><p>{properties.filter(item=>item.status==="available").length} disponibles</p></div><button className="secondary-button" onClick={exportProperties}>Descargar CSV</button></div><div className="table-scroll"><table><thead><tr><th>Inmueble</th><th>Ubicación</th><th>Precio</th><th>Estado</th></tr><tr className="column-filters"><th><input placeholder="Filtrar" value={propertyFilters.reference} onChange={e=>setPropertyFilters(x=>({...x,reference:e.target.value}))}/></th><th><input placeholder="Filtrar" value={propertyFilters.location} onChange={e=>setPropertyFilters(x=>({...x,location:e.target.value}))}/></th><th></th><th><select value={propertyFilters.status} onChange={e=>setPropertyFilters(x=>({...x,status:e.target.value}))}><option value="">Todos</option><option value="available">Disponible</option><option value="reserved">Reservada</option><option value="sold">Vendida</option><option value="rented">Alquilada</option><option value="inactive">Inactiva</option></select></th></tr></thead><tbody>{filteredProperties.length?filteredProperties.map(item=><tr key={item.id}><td><strong>{item.reference} · {item.title}</strong><small>{item.property_type} · {item.operation==="sale"?"Venta":"Alquiler"}</small></td><td>{item.city}{item.zone&&<small>{item.zone}</small>}</td><td>{new Intl.NumberFormat("es-HN",{style:"currency",currency:item.currency||"HNL",maximumFractionDigits:0}).format(item.price)}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("property",item.id,e.target.value)}><option value="available">Disponible</option><option value="reserved">Reservada</option><option value="sold">Vendida</option><option value="rented">Alquilada</option><option value="inactive">Inactiva</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay inmuebles registrados.</td></tr>}</tbody></table></div></article><article className="panel table-panel"><div className="panel-header"><div><h3>Clientes interesados</h3><p>{propertyInquiries.filter(item=>item.status==="new").length} nuevos</p></div><button className="secondary-button" onClick={exportInquiries}>Descargar CSV</button></div><div className="table-scroll"><table><thead><tr><th>Cliente</th><th>Búsqueda</th><th>Presupuesto</th><th>Estado</th></tr><tr className="column-filters"><th><input placeholder="Filtrar" value={inquiryFilters.customer} onChange={e=>setInquiryFilters(x=>({...x,customer:e.target.value}))}/></th><th><input placeholder="Filtrar" value={inquiryFilters.location} onChange={e=>setInquiryFilters(x=>({...x,location:e.target.value}))}/></th><th></th><th><select value={inquiryFilters.status} onChange={e=>setInquiryFilters(x=>({...x,status:e.target.value}))}><option value="">Todos</option><option value="new">Nuevo</option><option value="contacted">Contactado</option><option value="qualified">Calificado</option><option value="closed">Cerrado</option><option value="discarded">Descartado</option></select></th></tr></thead><tbody>{filteredInquiries.length?filteredInquiries.map(item=><tr key={item.id}><td><strong>{item.customer_name}</strong><small>{item.phone}</small></td><td>{item.intent==="buy"?"Compra":item.intent==="rent"?"Alquiler":"Venta"} · {item.property_type||"Inmueble"}<small>{[item.city,item.zone].filter(Boolean).join(" · ")||"Sin ubicación"}{item.bedrooms?` · ${item.bedrooms} hab.`:""}</small></td><td>{item.budget_max?new Intl.NumberFormat("es-HN",{style:"currency",currency:"HNL",maximumFractionDigits:0}).format(item.budget_max):"Por definir"}{item.notes&&<small>{item.notes}</small>}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("inquiry",item.id,e.target.value)}><option value="new">Nuevo</option><option value="contacted">Contactado</option><option value="qualified">Calificado</option><option value="closed">Cerrado</option><option value="discarded">Descartado</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay interesados.</td></tr>}</tbody></table></div></article><article className="panel table-panel"><div className="panel-header"><div><h3>Solicitudes de visita</h3><p>{propertyVisits.filter(item=>item.status==="pending").length} pendientes</p></div><button className="secondary-button" onClick={exportVisits}>Descargar CSV</button></div><div className="table-scroll"><table><thead><tr><th>Cliente</th><th>Propiedad</th><th>Fecha</th><th>Estado</th></tr><tr className="column-filters"><th><input placeholder="Filtrar" value={visitFilters.customer} onChange={e=>setVisitFilters(x=>({...x,customer:e.target.value}))}/></th><th><input placeholder="Filtrar" value={visitFilters.property} onChange={e=>setVisitFilters(x=>({...x,property:e.target.value}))}/></th><th></th><th><select value={visitFilters.status} onChange={e=>setVisitFilters(x=>({...x,status:e.target.value}))}><option value="">Todos</option><option value="pending">Pendiente</option><option value="confirmed">Confirmada</option><option value="completed">Completada</option><option value="cancelled">Cancelada</option></select></th></tr></thead><tbody>{filteredVisits.length?filteredVisits.map(item=><tr key={item.id}><td><strong>{item.customer_name}</strong><small>{item.phone}</small></td><td>{item.property_reference}<small>{item.party_size} visitante{item.party_size===1?"":"s"}</small></td><td>{new Date(`${item.requested_date}T00:00:00`).toLocaleDateString("es-HN")} · {item.requested_time.slice(0,5)}</td><td><select className="select request-status" value={item.status} onChange={e=>updateRealEstateStatus("visit",item.id,e.target.value)}><option value="pending">Pendiente</option><option value="confirmed">Confirmada</option><option value="completed">Completada</option><option value="cancelled">Cancelada</option></select></td></tr>):<tr><td colSpan={4} className="table-empty">Aún no hay visitas solicitadas.</td></tr>}</tbody></table></div></article></div></section>}
       {view === "reservaciones" && tenantId && <OperationalModule tenantId={tenantId} module="reservations" />}
       {view === "pipeline_v2" && tenantId && <PipelineWorkspace tenantId={tenantId} contacts={contacts} userId={userId} canConfigure={["owner","admin"].includes(currentRole)} />}
-      {view === "campos" && isClientAdmin && tenantId && <CustomFields tenantId={tenantId} />}
+      {view === "campos" && isClientAdmin && tenantId && <CustomFields tenantId={tenantId} enabledModules={enabledModules} />}
       {view === "pedidos" && tenantId && <OperationalModule tenantId={tenantId} module="orders" />}
       {view === "citas" && tenantId && <OperationalModule tenantId={tenantId} module="appointments" />}
       {view === "cotizaciones" && tenantId && <OperationalModule tenantId={tenantId} module="quotes" />}
@@ -863,10 +883,24 @@ function taskSourceLabel(source: Task["source"]) {
   return "Creada manualmente";
 }
 
+function parseCrmDate(value: string | null | undefined) {
+  if (!value) return new Date(Number.NaN);
+  const normalized = value.trim();
+  // Supabase puede devolver timestamps antiguos sin zona; esos valores son hora local del CRM.
+  if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?)?$/.test(normalized)) return new Date(normalized.replace(" ", "T"));
+  return new Date(normalized);
+}
+
+function localDateTimeToIso(date: string, time: string) {
+  const local = new Date(`${date}T${time}:00`);
+  return Number.isNaN(local.getTime()) ? `${date}T${time}:00` : local.toISOString();
+}
+
 function formatTaskDate(value: string | null) {
   if (!value) return "Sin fecha";
-  return new Date(value).toLocaleString("es-HN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return parseCrmDate(value).toLocaleString("es-HN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
+
 
 function localDateKey(value: Date) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
@@ -879,7 +913,7 @@ function TasksView({ tasks, teamMembers, userId, filter, onFilterChange, onToggl
   const now = new Date();
   const todayKey = localDateKey(now);
   const filtered = tasks.filter(task => {
-    const due = task.due_at ? new Date(task.due_at) : null;
+    const due = task.due_at ? parseCrmDate(task.due_at) : null;
     const dueKey = due && !Number.isNaN(due.getTime()) ? localDateKey(due) : "";
     if (filter === "mine") return task.assigned_to === userId;
     if (filter === "today") return dueKey === todayKey && !task.completed_at;
@@ -905,17 +939,53 @@ function TasksView({ tasks, teamMembers, userId, filter, onFilterChange, onToggl
   </section>;
 }
 
-function CalendarView({ tasks, onToggle }: { tasks: Task[]; onToggle: (task: Task) => Promise<void> }) {
+function CalendarView({ tasks, events, enabledModules, onToggle, onDelete, onCreate, onUpdate }: { tasks: Task[]; events: CalendarEvent[]; enabledModules: string[] | null; onToggle: (task: Task) => Promise<void>; onDelete: (id: string) => Promise<void>; onCreate: (title: string, time: string, date?: string) => Promise<void>; onUpdate: (id: string, title: string, dueAt: string) => Promise<void> }) {
   const today = new Date();
-  const [selectedDate, setSelectedDate] = useState(localDateKey(today));
-  const first = new Date(today.getFullYear(), today.getMonth(), 1);
-  const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-  const offset = (first.getDay() + 6) % 7;
-  const cells: Array<Date | null> = Array.from({ length: offset + daysInMonth }, (_, index) => index < offset ? null : new Date(today.getFullYear(), today.getMonth(), index - offset + 1));
-  const selectedTasks = tasks.filter(task => task.due_at && localDateKey(new Date(task.due_at)) === selectedDate);
-  const upcoming = tasks.filter(task => task.due_at && !task.completed_at && new Date(task.due_at).getTime() >= Date.now()).sort((a, b) => new Date(a.due_at || 0).getTime() - new Date(b.due_at || 0).getTime()).slice(0, 8);
+  const todayKey = localDateKey(today);
+  const [monthCursor, setMonthCursor] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [creatingDate, setCreatingDate] = useState<string | null>(null);
+  const [newTitle, setNewTitle] = useState("");
+  const [newTime, setNewTime] = useState("09:00");
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [externalEvents, setExternalEvents] = useState<CalendarEvent[]>([]);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDate, setEditDate] = useState(todayKey);
+  const [editTime, setEditTime] = useState("09:00");
+
+  const daysInMonth = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 0).getDate();
+  const offset = (new Date(monthCursor.getFullYear(), monthCursor.getMonth(), 1).getDay() + 6) % 7;
+  const cells: Array<Date | null> = Array.from({ length: offset + daysInMonth }, (_, index) => index < offset ? null : new Date(monthCursor.getFullYear(), monthCursor.getMonth(), index - offset + 1));
+  const taskEvents: CalendarEvent[] = tasks.filter(task => Boolean(task.due_at)).map(task => ({ id: `task-${task.id}`, kind: "task", title: task.title, start: task.due_at as string, detail: task.completed_at ? "Completada" : "Pendiente", status: task.completed_at ? "completed" : "pending", sourceId: task.id, editable: true }));
+  const eventModule: Record<string, string> = { reservation: "reservations", appointment: "appointments", property_visit: "visits" };
+  const visibleEvents = events.filter(event => !enabledModules || event.kind === "external" || !eventModule[event.kind] || enabledModules.includes(eventModule[event.kind]));
+  const allEvents = [...taskEvents, ...visibleEvents, ...externalEvents];
+  const selectedEvents = allEvents.filter(event => localDateKey(parseCrmDate(event.start)) === selectedDate).sort((a, b) => parseCrmDate(a.start).getTime() - parseCrmDate(b.start).getTime());
+  const pendingCount = tasks.filter(task => !task.completed_at).length;
+
+  function eventsForDate(key: string) { return allEvents.filter(event => localDateKey(parseCrmDate(event.start)) === key); }
+  function openDate(key: string) { setSelectedDate(key); setCreatingDate(key); const date = new Date(`${key}T12:00:00`); setMonthCursor(new Date(date.getFullYear(), date.getMonth(), 1)); }
+  function moveMonth(delta: number) { const next = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + delta, 1); setMonthCursor(next); setSelectedDate(localDateKey(next)); setCreatingDate(null); }
+  function startEdit(task: Task) { const value = task.due_at ? parseCrmDate(task.due_at) : new Date(); setEditingTaskId(task.id); setEditTitle(task.title); setEditDate(localDateKey(value)); setEditTime(value.toTimeString().slice(0, 5)); setCreatingDate(null); }
+  async function submitNew(event: FormEvent) { event.preventDefault(); if (!creatingDate || !newTitle.trim()) return; await onCreate(newTitle, newTime, creatingDate); setNewTitle(""); setCreatingDate(null); }
+  async function submitEdit(event: FormEvent) { event.preventDefault(); if (!editingTaskId || !editTitle.trim()) return; await onUpdate(editingTaskId, editTitle, localDateTimeToIso(editDate, editTime)); setEditingTaskId(null); }
+
   return <section className="view active calendar-view">
-    <div className="section-heading"><div><p className="eyebrow">PLANIFICACIÓN</p><h2>Calendario</h2><p>Visualiza vencimientos y próximos seguimientos en un solo lugar.</p></div></div>
-    <div className="calendar-layout"><article className="panel calendar-panel"><div className="calendar-heading"><h3>{today.toLocaleDateString("es-HN", { month: "long", year: "numeric" })}</h3><span>{tasks.filter(task => !task.completed_at).length} pendientes</span></div><div className="calendar-weekdays">{["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((date, index) => { const key = date ? localDateKey(date) : `empty-${index}`; const dayTasks = date ? tasks.filter(task => task.due_at && localDateKey(new Date(task.due_at)) === key) : []; return date ? <button type="button" className={`calendar-day ${key === selectedDate ? "selected" : ""} ${key === localDateKey(today) ? "today" : ""}`} key={key} onClick={() => setSelectedDate(key)}><strong>{date.getDate()}</strong>{dayTasks.slice(0, 3).map(task => <span className={task.completed_at ? "done" : ""} key={task.id}>{task.title}</span>)}{dayTasks.length > 3 && <small>+{dayTasks.length - 3} más</small>}</button> : <span className="calendar-day empty" key={key} />; })}</div></article><aside className="panel calendar-agenda"><div className="panel-header"><div><p className="eyebrow">AGENDA</p><h3>{selectedTasks.length ? "Tareas del día" : "Próximos seguimientos"}</h3></div></div>{selectedTasks.length ? selectedTasks.map(task => <label className={`calendar-task ${task.completed_at ? "done" : ""}`} key={task.id}><input type="checkbox" checked={Boolean(task.completed_at)} onChange={() => void onToggle(task)} /><span><strong>{task.title}</strong><small>{formatTaskDate(task.due_at)}</small></span></label>) : upcoming.map(task => <label className="calendar-task" key={task.id}><input type="checkbox" checked={Boolean(task.completed_at)} onChange={() => void onToggle(task)} /><span><strong>{task.title}</strong><small>{formatTaskDate(task.due_at)}</small></span></label>)}{!selectedTasks.length && !upcoming.length && <p className="task-empty">No hay tareas programadas.</p>}</aside></div>
+    <div className="section-heading"><div><p className="eyebrow">PLANIFICACIÓN</p><h2>Calendario</h2><p>Coordina tareas, reservas, citas y visitas de tu empresa en un solo lugar.</p></div><div className="section-actions"><button type="button" className="secondary-button" onClick={() => { setMonthCursor(new Date(today.getFullYear(), today.getMonth(), 1)); setSelectedDate(todayKey); setCreatingDate(null); }}>Hoy</button><button type="button" className="primary-button" onClick={() => setCreatingDate(selectedDate)}>＋ Nueva tarea</button></div></div>
+    <div className="calendar-layout">
+      <article className="panel calendar-panel"><div className="calendar-heading"><div className="calendar-month-nav"><button type="button" className="icon-button" aria-label="Mes anterior" onClick={() => moveMonth(-1)}>‹</button><h3>{monthCursor.toLocaleDateString("es-HN", { month: "long", year: "numeric" })}</h3><button type="button" className="icon-button" aria-label="Mes siguiente" onClick={() => moveMonth(1)}>›</button></div><span>{pendingCount} pendiente{pendingCount === 1 ? "" : "s"}</span></div><div className="calendar-weekdays">{["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"].map(day => <span key={day}>{day}</span>)}</div><div className="calendar-grid">{cells.map((date, index) => { const key = date ? localDateKey(date) : `empty-${index}`; const dayEvents = date ? eventsForDate(key) : []; return date ? <button type="button" className={`calendar-day ${key === selectedDate ? "selected" : ""} ${key === todayKey ? "today" : ""}`} key={key} onClick={() => openDate(key)}><strong>{date.getDate()}</strong>{dayEvents.slice(0, 3).map(event => <span className={`calendar-event-chip ${event.kind} ${event.status === "completed" ? "done" : ""}`} key={event.id}>{event.title}</span>)}{dayEvents.length > 3 && <small>+{dayEvents.length - 3} más</small>}</button> : <span className="calendar-day empty" key={key} />; })}</div><div className="calendar-legend"><span><i className="task" />Tareas</span><span><i className="reservation" />Reservas</span><span><i className="appointment" />Citas</span><span><i className="property_visit" />Visitas</span></div></article>
+      <aside className="panel calendar-agenda"><div className="panel-header"><div><p className="eyebrow">AGENDA</p><h3>{new Date(`${selectedDate}T12:00:00`).toLocaleDateString("es-HN", { weekday: "long", day: "numeric", month: "long" })}</h3><p>{selectedEvents.length} evento{selectedEvents.length === 1 ? "" : "s"}</p></div></div>{creatingDate && <form className="calendar-create" onSubmit={submitNew}><strong>Nueva tarea</strong><input required autoFocus value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="Ej. Llamar a un interesado" /><div className="calendar-form-row"><input type="date" value={creatingDate} onChange={event => { setCreatingDate(event.target.value); setSelectedDate(event.target.value); }} /><input type="time" value={newTime} onChange={event => setNewTime(event.target.value)} /></div><div className="row-actions"><button className="primary-button">Crear</button><button type="button" className="ghost-button" onClick={() => setCreatingDate(null)}>Cancelar</button></div></form>}{selectedEvents.length ? selectedEvents.map(event => { const task = event.kind === "task" ? tasks.find(item => item.id === event.sourceId) : null; return <div className={`calendar-agenda-item ${event.kind}`} key={event.id}>{task && editingTaskId === task.id ? <form onSubmit={submitEdit} className="calendar-edit"><input required value={editTitle} onChange={e => setEditTitle(e.target.value)} /><div className="calendar-form-row"><input type="date" value={editDate} onChange={e => setEditDate(e.target.value)} /><input type="time" value={editTime} onChange={e => setEditTime(e.target.value)} /></div><div className="row-actions"><button className="primary-button">Guardar</button><button type="button" className="ghost-button" onClick={() => setEditingTaskId(null)}>Cancelar</button></div></form> : <><div className="calendar-agenda-main"><span className="calendar-kind-dot" /><div><strong>{event.title}</strong><small>{parseCrmDate(event.start).toLocaleTimeString("es-HN", { hour: "2-digit", minute: "2-digit" })}{event.detail ? ` · ${event.detail}` : ""}</small></div></div>{task ? <div className="calendar-item-actions"><label><input type="checkbox" checked={Boolean(task.completed_at)} onChange={() => void onToggle(task)} /> Completada</label><button type="button" className="ghost-button" onClick={() => startEdit(task)}>Editar / mover</button><button type="button" className="danger-button" onClick={() => void onDelete(task.id)}>Eliminar</button></div> : <small className="calendar-readonly">Evento recibido desde {event.kind === "reservation" ? "reservaciones" : event.kind === "appointment" ? "citas" : "visitas"} · solo lectura</small>}</>}</div>; }) : !creatingDate && <div className="calendar-empty"><span>◷</span><strong>No hay eventos este día</strong><p>Selecciona una fecha o crea una tarea para comenzar.</p><button type="button" className="secondary-button" onClick={() => setCreatingDate(selectedDate)}>Crear tarea aquí</button></div>}</aside>
+    </div>
+    <CalendarSyncPanel onSynced={synced => setExternalEvents(current => [...current.filter(event => event.kind !== "external"), ...synced])} />
   </section>;
+}
+
+function CalendarSyncPanel({ onSynced }: { onSynced: (events: CalendarEvent[]) => void }) {
+  const [connections, setConnections] = useState<Array<{ provider: string; status: string; last_error?: string | null }>>([]);
+  const [syncing, setSyncing] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => { fetch("/api/calendar/connections").then(response => response.ok ? response.json() : { connections: [] }).then(data => setConnections(Array.isArray(data.connections) ? data.connections : [])).catch(() => undefined); }, []);
+  async function sync() { setSyncing(true); setMessage(""); try { const response = await fetch("/api/calendar/sync", { method: "POST" }); const data = await response.json(); if (!response.ok) throw new Error(data.error || "No fue posible sincronizar"); onSynced((data.events || []) as CalendarEvent[]); setMessage(`Sincronizado: ${(data.events || []).length} eventos externos.`); } catch (error) { setMessage(error instanceof Error ? error.message : "No fue posible sincronizar"); } finally { setSyncing(false); } }
+  const statusFor = (provider: string) => connections.find(item => item.provider === provider);
+  return <article className="panel calendar-sync"><div><p className="eyebrow">INTEGRACIONES</p><h3>Calendarios externos</h3><p>Importa tus eventos de Google Calendar u Outlook junto con la agenda del CRM. Tus credenciales permanecen cifradas.</p></div><div className="calendar-sync-actions">{(["google", "microsoft"] as const).map(provider => { const connection = statusFor(provider); return <div className="calendar-provider" key={provider}><div><strong>{provider === "google" ? "Google Calendar" : "Outlook Calendar"}</strong><small>{connection?.status === "connected" ? "Conectado" : connection?.last_error || "Sin conectar"}</small></div><a className="secondary-button" href={`/api/calendar/connect?provider=${provider}`}>{connection?.status === "connected" ? "Reconectar" : "Conectar"}</a></div>; })}<button type="button" className="primary-button" onClick={() => void sync()} disabled={syncing}>{syncing ? "Sincronizando…" : "Sincronizar calendarios"}</button></div>{message && <p className="calendar-sync-message">{message}</p>}</article>;
 }
