@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getActiveTenantIdFromCookie, resolveTenantMembership } from "@/lib/tenant-access";
+import { hasTenantPermission } from "@/lib/permissions";
 
 type Row = Record<string, any>;
 type Range = { start: Date; end: Date; days: number };
@@ -87,16 +89,16 @@ async function loadRange(supabase: any, tenantId: string, range: Range): Promise
   const from = range.start.toISOString();
   const to = range.end.toISOString();
   const [conversationsResult, messagesResult, dealsResult, contactsResult, forms, reservations, orders, appointments, quotes, inquiries, visits] = await Promise.all([
-    supabase.from("conversations").select("id,channel,status,assigned_to,created_at,last_message_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to),
-    supabase.from("messages").select("conversation_id,direction,sender_id,sender_type,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).order("created_at", { ascending: true }),
-    supabase.from("deals").select("id,stage,stage_id,value,created_at,updated_at,owner_id").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to),
-    supabase.from("contacts").select("id,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to),
-    optionalRows(supabase.from("site_form_submissions").select("id,form_type,status,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to)),
-    optionalRows(supabase.from("reservations").select("id,status,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to)),
-    optionalRows(supabase.from("orders").select("id,status,estimated_total,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to)),
-    optionalRows(supabase.from("appointments").select("id,status,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to)),
-    optionalRows(supabase.from("quotes").select("id,status,amount,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to)),
-    optionalRows(supabase.from("property_inquiries").select("id,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to)),
+    supabase.from("conversations").select("id,channel,status,assigned_to,created_at,last_message_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999),
+    supabase.from("messages").select("conversation_id,direction,sender_id,sender_type,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).order("created_at", { ascending: true }).range(0, 9999),
+    supabase.from("deals").select("id,stage,stage_id,value,created_at,updated_at,owner_id").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999),
+    supabase.from("contacts").select("id,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999),
+    optionalRows(supabase.from("site_form_submissions").select("id,form_type,status,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999)),
+    optionalRows(supabase.from("reservations").select("id,status,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999)),
+    optionalRows(supabase.from("orders").select("id,status,estimated_total,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999)),
+    optionalRows(supabase.from("appointments").select("id,status,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999)),
+    optionalRows(supabase.from("quotes").select("id,status,amount,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999)),
+    optionalRows(supabase.from("property_inquiries").select("id,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to).range(0, 4999)),
     optionalRows(supabase.from("property_visits").select("id,created_at").eq("tenant_id", tenantId).gte("created_at", from).lte("created_at", to))
   ]);
   const error = conversationsResult.error || messagesResult.error || dealsResult.error || contactsResult.error;
@@ -170,9 +172,10 @@ export async function GET(request: Request) {
   const supabase = await createServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  const { data: membership } = await supabase.from("memberships").select("tenant_id,role").eq("user_id", auth.user.id).eq("active", true).limit(1).maybeSingle();
-  if (!membership) return NextResponse.json({ error: "Sin empresa" }, { status: 403 });
   const params = new URL(request.url).searchParams;
+  const requestedTenantId = params.get("tenantId") || await getActiveTenantIdFromCookie();
+  const { membership } = await resolveTenantMembership(supabase, auth.user.id, requestedTenantId);
+  if (!membership) return NextResponse.json({ error: requestedTenantId ? "No tienes acceso a esa empresa." : "Selecciona una empresa activa antes de consultar el reporte." }, { status: requestedTenantId ? 403 : 409 });
   const range = rangeFromParams(params);
   const previous = previousRange(range);
   try {
@@ -216,6 +219,7 @@ export async function GET(request: Request) {
     const unanswered = currentData.conversations.filter(conversation => ["open", "pending"].includes(String(conversation.status || "open")) && latestDirection.get(conversation.id) === "inbound").length;
     const staleCutoff = Date.now() - 7 * 86400000;
     const staleDeals = currentData.deals.filter(deal => !["won", "lost"].includes(String(deal.stage || "").toLowerCase()) && new Date(deal.updated_at || deal.created_at).getTime() < staleCutoff).length;
+    const canViewFinancial = hasTenantPermission(membership.role, "reports.financial", membership.permissions);
     const settings = (tenantResult.data?.settings || {}) as Row;
     const savedGoals = settings.report_goals || {};
     const goals = { contacts: Number(savedGoals.contacts || 0), sales: Number(savedGoals.sales || 0), responseMinutes: Number(savedGoals.responseMinutes || 30) };
@@ -229,9 +233,9 @@ export async function GET(request: Request) {
     const changeFor = (key: string) => Number(changes[key] || 0);
     return NextResponse.json({
       period: range.days, range: { from: range.start.toISOString().slice(0, 10), to: range.end.toISOString().slice(0, 10) }, role: membership.role,
-      metrics: { ...metrics, unanswered, staleDeals }, previousMetrics, changes: { ...changes, unanswered: changeFor("unanswered") }, goals,
+      metrics: { ...(canViewFinancial ? metrics : { ...metrics, wonDeals: 0, salesValue: 0 }), unanswered, staleDeals }, previousMetrics: canViewFinancial ? previousMetrics : { ...previousMetrics, wonDeals: 0, salesValue: 0 }, changes: { ...changes, salesValue: canViewFinancial ? changes.salesValue : 0, unanswered: changeFor("unanswered") }, permissions: { financial: canViewFinancial }, goals: canViewFinancial ? goals : { ...goals, sales: 0 },
       daily: buildDaily(currentData, range), channels: Object.entries(currentData.conversations.reduce<Record<string, number>>((acc, item) => { const key = String(item.channel || "Otro"); acc[key] = (acc[key] || 0) + 1; return acc; }, {})).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value),
-      funnel: buildFunnel(currentData), stages: Array.from(byStage.values()).sort((a, b) => a.position - b.position), operational: buildOperational(currentData), agents, alerts
+      funnel: canViewFinancial ? buildFunnel(currentData) : buildFunnel(currentData).map(item => ({ ...item, value: 0 })), stages: (canViewFinancial ? Array.from(byStage.values()) : Array.from(byStage.values()).map(item => ({ ...item, value: 0 }))).sort((a, b) => a.position - b.position), operational: buildOperational(currentData), agents: canViewFinancial ? agents : agents.map(item => ({ ...item, wonDeals: 0, salesValue: 0 })), alerts
     });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo calcular el reporte." }, { status: 400 });
@@ -242,8 +246,9 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabase();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  const { data: membership } = await supabase.from("memberships").select("tenant_id,role").eq("user_id", auth.user.id).eq("active", true).limit(1).maybeSingle();
-  if (!membership || !["owner", "admin"].includes(membership.role)) return NextResponse.json({ error: "Solo el propietario o administrador puede configurar metas." }, { status: 403 });
+  const requestedTenantId = await getActiveTenantIdFromCookie();
+  const { membership } = await resolveTenantMembership(supabase, auth.user.id, requestedTenantId);
+  if (!membership || !["owner", "admin"].includes(membership.role) || !hasTenantPermission(membership.role, "settings.manage", membership.permissions)) return NextResponse.json({ error: "No tienes permiso para configurar metas." }, { status: 403 });
   const body = await request.json().catch(() => ({}));
   const contacts = Math.max(0, Math.round(Number(body.goals?.contacts || 0)));
   const sales = Math.max(0, Math.round(Number(body.goals?.sales || 0)));

@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getActiveTenantIdFromCookie, resolveTenantMembership, requireTenantCapability } from "@/lib/tenant-access";
 
 async function authorize(requireAdmin = true) {
+  if (requireAdmin) {
+    const access = await requireTenantCapability("team");
+    if (!access) return null;
+    return { user: access.user, membership: access.membership };
+  }
   const server = await createServerSupabase();
   const { data: auth } = await server.auth.getUser();
   if (!auth.user) return null;
-  const { data: membership } = await server.from("memberships").select("tenant_id, role").eq("user_id", auth.user.id).eq("active", true).limit(1).maybeSingle();
-  if (!membership || (requireAdmin && !["owner", "admin"].includes(membership.role))) return null;
-  return { user: auth.user, membership };
+  const { membership } = await resolveTenantMembership(server, auth.user.id, await getActiveTenantIdFromCookie());
+  return membership ? { user: auth.user, membership } : null;
 }
 
 export async function GET() {
@@ -16,7 +21,7 @@ export async function GET() {
   if (!access) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   const admin = createAdminSupabase();
   const tenantId = access.membership.tenant_id;
-  const { data: memberships, error } = await admin.from("memberships").select("user_id, role, active, invitation_status, invited_at, deactivated_at").eq("tenant_id", tenantId);
+  const { data: memberships, error } = await admin.from("memberships").select("user_id, role, active, permissions, invitation_status, invited_at, deactivated_at").eq("tenant_id", tenantId);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   const { data: users, error: usersError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
   if (usersError) return NextResponse.json({ error: usersError.message }, { status: 400 });
@@ -34,7 +39,7 @@ export async function GET() {
     const lastSeenAt = lastAccess.get(member.user_id) || user?.last_sign_in_at || null;
     const online = Boolean(lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < 15 * 60 * 1000);
     return { id: member.user_id, email: user?.email || "Sin correo", name: String(user?.user_metadata?.full_name || user?.email?.split("@")[0] || "Usuario"), role: member.role,
-      active: member.active !== false, invitationStatus: member.invitation_status || (user?.email_confirmed_at ? "accepted" : "pending"), invitedAt: member.invited_at,
+      active: member.active !== false, permissions: member.permissions || {}, invitationStatus: member.invitation_status || (user?.email_confirmed_at ? "accepted" : "pending"), invitedAt: member.invited_at,
       lastSeenAt, online,
       workload: { conversations:(conversations||[]).filter(x=>x.assigned_to===member.user_id).length, tasks:(tasks||[]).filter(x=>x.assigned_to===member.user_id).length, deals:(deals||[]).filter(x=>x.owner_id===member.user_id).length }
     };
@@ -71,7 +76,7 @@ export async function PATCH(request: Request) {
   const access = await authorize();
   if (!access) return NextResponse.json({ error: "No autorizado" }, { status: 403 });
   const body = await request.json().catch(() => ({}));
-  const { userId, role, active, reassignTo } = body;
+  const { userId, role, active, reassignTo, permissions } = body;
   if (body.action === "reassign") {
     const sourceUserId = String(body.fromUserId || "");
     const targetUserId = String(body.toUserId || "");
@@ -101,8 +106,13 @@ export async function PATCH(request: Request) {
       admin.from("deals").update({owner_id:reassignTo}).eq("tenant_id",access.membership.tenant_id).eq("owner_id",userId)
     ]);
   }
-  const changes:Record<string,unknown>={};
+  const changes:Record<string,unknown> = {};
   if(role!==undefined) changes.role=role;
+  if (permissions !== undefined) {
+    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) return NextResponse.json({ error: "Permisos inválidos" }, { status: 400 });
+    const allowed = ["sales.view", "sales.edit", "contacts.export", "reports.financial", "automations.manage", "integrations.manage", "team.manage", "settings.manage", "audit.view"];
+    changes.permissions = Object.fromEntries(Object.entries(permissions).filter(([key, value]) => allowed.includes(key) && typeof value === "boolean"));
+  }
   if(active!==undefined){changes.active=active;changes.deactivated_at=active?null:new Date().toISOString();changes.invitation_status=active?"accepted":"revoked";}
   const { error } = await admin.from("memberships").update(changes).eq("tenant_id", access.membership.tenant_id).eq("user_id", userId).neq("role", "owner");
   return error ? NextResponse.json({ error: error.message }, { status: 400 }) : NextResponse.json({ ok: true });
