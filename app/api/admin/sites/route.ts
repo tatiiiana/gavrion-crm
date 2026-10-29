@@ -3,6 +3,10 @@ import { requirePlatformPermission } from "@/lib/platform-access";
 import { cleanSiteSlug, sanitizeSiteConfig,siteConfigForTemplate } from "@/lib/site-builder";
 import {getSiteTemplate} from "@/lib/site-templates/catalog";
 
+function compatibleBusinessType(value:string){
+  return value === "gastronomy" ? "restaurant" : value;
+}
+
 export async function GET(){
   const access=await requirePlatformPermission("sites.read");
   if(!access)return NextResponse.json({error:"No tienes permiso para ver proyectos de sitios."},{status:403});
@@ -20,8 +24,16 @@ export async function POST(request:Request){
   const access=await requirePlatformPermission("sites.write",tenantId);
   if(!access)return NextResponse.json({error:"No tienes permiso para crear sitios para esta empresa."},{status:403});
   if(!tenantId||!getSiteTemplate(templateKey))return NextResponse.json({error:"Empresa o plantilla inválida."},{status:400});
-  const {data:tenant}=await access.admin.from("tenants").select("id,name,slug,widget_key").eq("id",tenantId).maybeSingle();
+  const {data:tenant}=await access.admin.from("tenants").select("id,name,slug,widget_key,template_key,implementation_template_id").eq("id",tenantId).maybeSingle();
   if(!tenant)return NextResponse.json({error:"La empresa no existe."},{status:404});
+  const {data:crmTemplate}=tenant.implementation_template_id
+    ? await access.admin.from("implementation_templates").select("business_type").eq("id",tenant.implementation_template_id).maybeSingle()
+    : {data:null};
+  const tenantBusiness=compatibleBusinessType(String(crmTemplate?.business_type || tenant.template_key || "generic"));
+  const siteBusiness=compatibleBusinessType(String(getSiteTemplate(templateKey)?.businessType || "generic"));
+  if(tenantBusiness !== "generic" && siteBusiness !== tenantBusiness){
+    return NextResponse.json({error:"La plantilla del sitio no corresponde al rubro configurado para esta empresa."},{status:409});
+  }
   const existing=await access.admin.from("site_projects").select("*").eq("tenant_id",tenantId).is("archived_at",null).order("updated_at",{ascending:false}).limit(1).maybeSingle();
   if(existing.error)return NextResponse.json({error:existing.error.message},{status:400});
   if(existing.data?.template_key===templateKey)return NextResponse.json(existing.data);
