@@ -15,6 +15,7 @@ import { AccountTab, OwnerCenter, type OwnerNotification } from "./owner-center"
 import { NotificationBell } from "./notification-bell";
 import { downloadCsv } from "./export-utils";
 import { configuredModulesForBusiness } from "@/lib/business-modules";
+import { hasTenantPermission, tenantPermissionLabels, type TenantPermission } from "@/lib/permissions";
 type CalendarEventKind = "task" | "reservation" | "appointment" | "property_visit" | "external";
 type CalendarEvent = { id: string; kind: CalendarEventKind; title: string; start: string; end?: string | null; detail?: string; status?: string | null; sourceId?: string; editable?: boolean };
 
@@ -22,7 +23,7 @@ const periodLabels: Record<Period, string> = { week: "esta semana", "30d": "últ
 const dealStages: { id: DealStage; label: string }[] = [{ id: "new", label: "Nuevo" }, { id: "proposal", label: "Propuesta" }, { id: "negotiation", label: "Negociación" }, { id: "won", label: "Ganado" }];
 type ChatMessage = { id: string; text: string; direction: "inbound" | "outbound"; createdAt: string };
 type Thread = { id: string; name: string; channel: string; preview: string; contactId: string; externalThreadId: string; handlingMode: "bot" | "waiting_agent" | "human"; assignedTo: string; unread: number; messages: ChatMessage[] };
-type TeamMember = { id: string; name: string; email: string; role: "owner" | "admin" | "agent" | "viewer"; active?:boolean; invitationStatus?:string; invitedAt?: string | null; lastSeenAt?: string | null; online?: boolean; workload?:{conversations:number;tasks:number;deals:number} };
+type TeamMember = { id: string; name: string; email: string; role: "owner" | "admin" | "agent" | "viewer"; permissions?: Partial<Record<TenantPermission, boolean>>; active?:boolean; invitationStatus?:string; invitedAt?: string | null; lastSeenAt?: string | null; online?: boolean; workload?:{conversations:number;tasks:number;deals:number} };
 type Property = { id: string; reference: string; title: string; property_type: string; operation: "sale" | "rent"; price: number; currency: string; city: string; zone: string | null; bedrooms: number | null; status: "available" | "reserved" | "sold" | "rented" | "inactive" };
 type PropertyInquiry = { id: string; customer_name: string; phone: string; intent: "buy" | "rent" | "sell"; property_type: string | null; city: string | null; zone: string | null; budget_max: number | null; bedrooms: number | null; notes: string | null; status: "new" | "contacted" | "qualified" | "closed" | "discarded" };
 type PropertyVisit = { id: string; property_reference: string; customer_name: string; phone: string; requested_date: string; requested_time: string; party_size: number; notes: string | null; status: "pending" | "confirmed" | "completed" | "cancelled" }; type Reservation = { id: string; customer_name: string; reservation_date: string; reservation_time: string; party_size: number; status: string }; type Appointment = { id: string; customer_name: string; service: string; scheduled_at: string; status: string };
@@ -30,6 +31,7 @@ type SettingsTab = "control" | "empresa" | "canales" | "asistente";
 type TaskViewFilter = "mine" | "team" | "today" | "overdue" | "followups" | "conversations" | "forms";
 type DashboardGoals = { revenue: number; leads: number; responseMinutes: number };
 const defaultDashboardGoals: DashboardGoals = { revenue: 0, leads: 0, responseMinutes: 30 };
+const teamPermissionOptions: TenantPermission[] = ["sales.view", "sales.edit", "contacts.export", "reports.financial", "automations.manage", "integrations.manage"];
 const setupTabs: SettingsTab[] = ["empresa", "canales", "asistente"];
 
 function classifyTask(title: string): Task["source"] {
@@ -53,7 +55,10 @@ export default function Dashboard() {
   const [inviteRole, setInviteRole] = useState<TeamMember["role"]>("agent");
   const [inviting, setInviting] = useState(false);
   const [reassignTargets, setReassignTargets] = useState<Record<string, string>>({});
+  const [savingPermission, setSavingPermission] = useState<string | null>(null);
   const [tenantId, setTenantId] = useState("");
+  const [tenantOptions, setTenantOptions] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  const [tenantSelectionRequired, setTenantSelectionRequired] = useState(false);
   const [tenantLogoUrl, setTenantLogoUrl] = useState("");
   const [brandingName, setBrandingName] = useState("");
   const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
@@ -89,8 +94,8 @@ export default function Dashboard() {
   const [time, setTime] = useState("15:00");
   const visible = useMemo(() => tasks.filter(t => filter === "all" || (filter === "done" ? t.completed_at : !t.completed_at)), [tasks, filter]);
   const completed = tasks.filter(t => t.completed_at).length;
-  const isClientAdmin = !supportMode && (currentRole === "owner" || currentRole === "admin");
-  const canOperateSales = supportMode || currentRole === "owner" || currentRole === "admin" || currentRole === "agent";
+  const isClientAdmin = !supportMode && hasTenantPermission(currentRole, "settings.manage");
+  const canOperateSales = supportMode || hasTenantPermission(currentRole, "sales.edit");
   const roleAllowsModule = (viewId: string) => {
     if (supportMode) return !["equipo", "configuracion", "automatizaciones", "campos"].includes(viewId);
     if (currentRole === "viewer") return ["inicio", "conversaciones", "contactos", "tareas", "calendario", "reportes"].includes(viewId);
@@ -108,7 +113,7 @@ export default function Dashboard() {
     const matchesQuery = !query || `${contact.name} ${contact.email} ${contact.company}`.toLowerCase().includes(query);
     return matchesQuery && (!contactFilters.name || contact.name.toLowerCase().includes(contactFilters.name.toLowerCase())) && (!contactFilters.company || contact.company.toLowerCase().includes(contactFilters.company.toLowerCase())) && (!contactFilters.phone || contact.phone.toLowerCase().includes(contactFilters.phone.toLowerCase())) && (!contactFilters.status || contact.status === contactFilters.status);
   }), [contacts, contactQuery, contactFilters]);
-  function exportContacts() { downloadCsv("contactos", filteredContacts, [{ key: "name", label: "Nombre", value: contact => contact.name }, { key: "email", label: "Correo", value: contact => contact.email }, { key: "phone", label: "Teléfono", value: contact => contact.phone }, { key: "company", label: "Empresa", value: contact => contact.company }, { key: "status", label: "Estado", value: contact => contact.status }]); }
+  function exportContacts() { if (!hasTenantPermission(currentRole, "contacts.export") && !supportMode) { showNotice("error", "No tienes permiso para exportar contactos."); return; } downloadCsv("contactos", filteredContacts, [{ key: "name", label: "Nombre", value: contact => contact.name }, { key: "email", label: "Correo", value: contact => contact.email }, { key: "phone", label: "Teléfono", value: contact => contact.phone }, { key: "company", label: "Empresa", value: contact => contact.company }, { key: "status", label: "Estado", value: contact => contact.status }]); }
   function exportConversations() { downloadCsv("conversaciones", threads, [{ key: "name", label: "Contacto", value: thread => thread.name }, { key: "channel", label: "Canal", value: thread => thread.channel }, { key: "status", label: "Atención", value: thread => thread.handlingMode }, { key: "assigned", label: "Responsable", value: thread => thread.assignedTo }, { key: "preview", label: "Último mensaje", value: thread => thread.preview }]); }
   function exportProperties(){downloadCsv("propiedades",filteredProperties,[{key:"reference",label:"Referencia",value:item=>item.reference},{key:"title",label:"Título",value:item=>item.title},{key:"location",label:"Ubicación",value:item=>`${item.city} ${item.zone||""}`},{key:"price",label:"Precio",value:item=>item.price},{key:"status",label:"Estado",value:item=>item.status}]);}
   function exportInquiries(){downloadCsv("interesados",filteredInquiries,[{key:"customer",label:"Cliente",value:item=>item.customer_name},{key:"phone",label:"Teléfono",value:item=>item.phone},{key:"intent",label:"Interés",value:item=>item.intent},{key:"location",label:"Ubicación",value:item=>`${item.city||""} ${item.zone||""}`},{key:"status",label:"Estado",value:item=>item.status}]);}
@@ -123,6 +128,8 @@ export default function Dashboard() {
   const [selectedThread, setSelectedThread] = useState(0);
   const [message, setMessage] = useState("");
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [conversationPage, setConversationPage] = useState(1);
+  const [hasMoreConversations, setHasMoreConversations] = useState(false);
   const [visibleMessageCount, setVisibleMessageCount] = useState(50);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const previousLastMessageRef = useRef("");
@@ -163,8 +170,31 @@ export default function Dashboard() {
         setUserId(user.id);
         const email = user.email || "";
         const name = String(user.user_metadata?.full_name || email.split("@")[0] || "Usuario");
-        let { data: membership } = await supabase.from("memberships").select("tenant_id, role").eq("user_id", user.id).limit(1).maybeSingle();
+        const { data: activeMemberships } = await supabase.from("memberships").select("tenant_id, role, active").eq("user_id", user.id).eq("active", true).order("tenant_id", { ascending: true });
+        const membershipRows = activeMemberships || [];
+        const tenantIds = membershipRows.map(row => row.tenant_id).filter(Boolean);
+        const { data: tenantRows } = tenantIds.length ? await supabase.from("tenants").select("id, name").in("id", tenantIds) : { data: [] as Array<{ id: string; name: string }> };
+        const tenantNames = new Map((tenantRows || []).map(row => [row.id, row.name || row.id]));
+        const options = membershipRows.map(row => ({ id: row.tenant_id, name: tenantNames.get(row.tenant_id) || row.tenant_id, role: row.role }));
+        setTenantOptions(options);
         const supportTenant = new URLSearchParams(window.location.search).get("supportTenant");
+        if (!supportTenant) {
+          const platformResponse = await fetch("/api/admin/access", { cache: "no-store" }).catch(() => null);
+          const platformAccess = platformResponse?.ok ? await platformResponse.json().catch(() => null) : null;
+          if (platformAccess?.isPlatformStaff) { window.location.replace("/admin"); return; }
+        }
+        const queryTenant = new URLSearchParams(window.location.search).get("tenantId");
+        const cookieTenant = document.cookie.split(";").map(value => value.trim()).find(value => value.startsWith("gavrion_active_tenant="))?.split("=")[1] || "";
+        const requestedTenant = queryTenant || cookieTenant || "";
+        let membership = membershipRows.find(row => row.tenant_id === requestedTenant) || (membershipRows.length === 1 ? membershipRows[0] : null);
+        if (!membership && options.length > 1 && !supportTenant) {
+          setTenantSelectionRequired(true);
+          setAccount({ name, email, initials: name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toUpperCase() || "U", role: "Selecciona una empresa", company: "" });
+          setDataLoading(false);
+          setAuthReady(true);
+          return;
+        }
+        if (membership?.tenant_id) document.cookie = `gavrion_active_tenant=${encodeURIComponent(membership.tenant_id)};path=/;max-age=2592000;samesite=lax`;
         let supportSession = false;
         if (supportTenant) {
           const response = await fetch(`/api/admin/support-context?tenantId=${encodeURIComponent(supportTenant)}`, { cache: "no-store" });
@@ -174,16 +204,6 @@ export default function Dashboard() {
             setSupportMode(true);
           } else {
             setNotice({ type: "error", text: "No fue posible abrir esta empresa en modo soporte." });
-          }
-        }
-        if (!supportTenant) {
-          // El personal Gavrion trabaja en el panel de plataforma, incluso si
-          // Supabase creó una membresía temporal durante la invitación.
-          const platformResponse = await fetch("/api/admin/access", { cache: "no-store" }).catch(() => null);
-          const platformAccess = platformResponse?.ok ? await platformResponse.json().catch(() => null) : null;
-          if (platformAccess?.isPlatformStaff) {
-            window.location.replace("/admin");
-            return;
           }
         }
         setCurrentRole(membership?.role || "");
@@ -225,14 +245,14 @@ export default function Dashboard() {
           if (knowledgeResult.data) { setKnowledgeId(knowledgeResult.data.id); setKnowledgeContent(knowledgeResult.data.content); }
 
           const [contactsResult, tasksResult, dealsResult, conversationsResult, messagesResult, propertiesResult, inquiriesResult, visitsResult, formTasksResult, inquiryTasksResult, reservationsResult, appointmentsResult] = await Promise.all([
-            supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
-            supabase.from("tasks").select("id, title, due_at, completed_at, assigned_to").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }),
-            supabase.from("deals").select("id, title, stage, value, currency, contact_id, expected_close_date").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }),
-            supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, handling_mode, assigned_to, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }),
-            supabase.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: true }),
-            supabase.from("properties").select("id, reference, title, property_type, operation, price, currency, city, zone, bedrooms, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
-            supabase.from("property_inquiries").select("id, customer_name, phone, intent, property_type, city, zone, budget_max, bedrooms, notes, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }),
-            supabase.from("property_visits").select("id, property_reference, customer_name, phone, requested_date, requested_time, party_size, notes, status").eq("tenant_id", membership.tenant_id).order("requested_date", { ascending: true }),
+            supabase.from("contacts").select("id, full_name, email, phone, company, status").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }).range(0, 199),
+            supabase.from("tasks").select("id, title, due_at, completed_at, assigned_to").eq("tenant_id", membership.tenant_id).order("due_at", { ascending: true, nullsFirst: false }).range(0, 199),
+            supabase.from("deals").select("id, title, stage, value, currency, contact_id, expected_close_date").eq("tenant_id", membership.tenant_id).order("updated_at", { ascending: false }).range(0, 199),
+            supabase.from("conversations").select("id, contact_id, channel, external_thread_id, status, handling_mode, assigned_to, last_message_at").eq("tenant_id", membership.tenant_id).order("last_message_at", { ascending: false }).range(0, 99),
+            supabase.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: true }).range(0, 4999),
+            supabase.from("properties").select("id, reference, title, property_type, operation, price, currency, city, zone, bedrooms, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }).range(0, 499),
+            supabase.from("property_inquiries").select("id, customer_name, phone, intent, property_type, city, zone, budget_max, bedrooms, notes, status").eq("tenant_id", membership.tenant_id).order("created_at", { ascending: false }).range(0, 499),
+            supabase.from("property_visits").select("id, property_reference, customer_name, phone, requested_date, requested_time, party_size, notes, status").eq("tenant_id", membership.tenant_id).order("requested_date", { ascending: true }).range(0, 499),
             supabase.from("site_form_submissions").select("task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("task_id", "is", null).limit(5000),
             supabase.from("property_inquiries").select("follow_up_task_id, conversation_id").eq("tenant_id", membership.tenant_id).not("follow_up_task_id", "is", null).limit(5000),
             supabase.from("reservations").select("id, customer_name, reservation_date, reservation_time, party_size, status").eq("tenant_id", membership.tenant_id).order("reservation_date", { ascending: true }).limit(1000),
@@ -302,9 +322,9 @@ const taskSources = new Map<string, Task["source"]>();
 
     async function refreshConversations() {
       const [contactsResult, conversationsResult, messagesResult, readsResult] = await Promise.all([
-        client.from("contacts").select("id, full_name").eq("tenant_id", tenantId),
-        client.from("conversations").select("id, contact_id, channel, external_thread_id, handling_mode, assigned_to, last_message_at").eq("tenant_id", tenantId).order("last_message_at", { ascending: false }),
-        client.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: true }),
+        client.from("contacts").select("id, full_name").eq("tenant_id", tenantId).range(0, 499),
+        client.from("conversations").select("id, contact_id, channel, external_thread_id, handling_mode, assigned_to, last_message_at", { count: "exact" }).eq("tenant_id", tenantId).order("last_message_at", { ascending: false }).range(0, 99),
+        client.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", tenantId).order("created_at", { ascending: true }).range(0, 4999),
         client.from("conversation_reads").select("conversation_id, last_read_at").eq("tenant_id", tenantId).eq("user_id", userId)
       ]);
       if (!active || contactsResult.error || conversationsResult.error || messagesResult.error) return;
@@ -331,6 +351,8 @@ const taskSources = new Map<string, Task["source"]>();
         };
       });
       setThreads(nextThreads);
+      setHasMoreConversations((conversationsResult.count || 0) > nextThreads.length);
+      setConversationPage(1);
       setSelectedThread(current => nextThreads.length ? Math.min(current, nextThreads.length - 1) : 0);
     }
 
@@ -363,8 +385,8 @@ const taskSources = new Map<string, Task["source"]>();
     const from = period === "week" ? new Date(now.getTime() - 7 * 86400000) : period === "30d" ? new Date(now.getTime() - 30 * 86400000) : new Date(now.getFullYear(), 0, 1);
     Promise.all([
       supabase.from("contacts").select("id", { count: "exact", head: true }).eq("tenant_id", tenantId).neq("status", "inactive").gte("created_at", from.toISOString()),
-      supabase.from("conversations").select("id, created_at", { count: "exact" }).eq("tenant_id", tenantId).gte("created_at", from.toISOString()),
-      supabase.from("deals").select("id, value, stage, created_at").eq("tenant_id", tenantId).gte("created_at", from.toISOString())
+      supabase.from("conversations").select("id, created_at", { count: "exact" }).eq("tenant_id", tenantId).gte("created_at", from.toISOString()).range(0, 4999),
+      supabase.from("deals").select("id, value, stage, created_at").eq("tenant_id", tenantId).gte("created_at", from.toISOString()).range(0, 4999)
     ]).then(([contactResult, conversationResult, dealResult]) => {
       if (contactResult.error || conversationResult.error || dealResult.error) {
         setNotice({ type: "error", text: contactResult.error?.message || conversationResult.error?.message || dealResult.error?.message || "No se pudieron actualizar las métricas." });
@@ -659,6 +681,17 @@ const taskSources = new Map<string, Task["source"]>();
     showNotice("success", active ? "Acceso reactivado." : "Integrante desactivado.");
   }
 
+  async function updateMemberPermission(member: TeamMember, permission: TenantPermission, value: boolean) {
+    if (!tenantId || member.role === "owner") return;
+    const permissions = { ...(member.permissions || {}), [permission]: value };
+    setSavingPermission(`${member.id}:${permission}`);
+    const response = await fetch("/api/team", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: member.id, permissions }) });
+    const body = await response.json().catch(() => ({}));
+    setSavingPermission(null);
+    if (!response.ok) { showNotice("error", body.error || "No se pudo actualizar el permiso."); return; }
+    setTeamMembers(current => current.map(item => item.id === member.id ? { ...item, permissions } : item));
+    showNotice("success", "Permiso actualizado.");
+  }
   async function reassignMember(member: TeamMember) {
     const target = reassignTargets[member.id];
     if (!target) { showNotice("error", "Selecciona el integrante que recibirá el trabajo."); return; }
@@ -795,6 +828,33 @@ const taskSources = new Map<string, Task["source"]>();
     setThreads(current => current.map(item => item.id === currentThread.id ? { ...item, unread: 0 } : item));
   }, [view, currentThread?.id, currentThread?.unread, tenantId, userId]);
 
+  async function loadMoreConversations() {
+    if (!tenantId || !hasMoreConversations) return;
+    const client = createClientSupabase();
+    if (!client) return;
+    const from = conversationPage * 100;
+    const conversationsResult = await client.from("conversations").select("id, contact_id, channel, external_thread_id, handling_mode, assigned_to, last_message_at").eq("tenant_id", tenantId).order("last_message_at", { ascending: false }).range(from, from + 99);
+    if (conversationsResult.error || !conversationsResult.data?.length) { setHasMoreConversations(false); return; }
+    const rows = conversationsResult.data;
+    const contactIds = rows.map(row => row.contact_id).filter(Boolean);
+    const ids = rows.map(row => row.id);
+    const [contactsResult, messagesResult, readsResult] = await Promise.all([
+      contactIds.length ? client.from("contacts").select("id, full_name").in("id", contactIds).eq("tenant_id", tenantId) : Promise.resolve({ data: [] as Array<{ id: string; full_name: string | null }> }),
+      client.from("messages").select("id, conversation_id, direction, body, created_at").eq("tenant_id", tenantId).in("conversation_id", ids).order("created_at", { ascending: true }),
+      client.from("conversation_reads").select("conversation_id, last_read_at").eq("tenant_id", tenantId).eq("user_id", userId).in("conversation_id", ids)
+    ]);
+    const names = new Map((contactsResult.data || []).map(contact => [contact.id, contact.full_name]));
+    const allMessages = messagesResult.data || [];
+    const reads = new Map((readsResult.data || []).map(item => [item.conversation_id, item.last_read_at]));
+    const channelLabels: Record<string, string> = { whatsapp: "WhatsApp", instagram: "Instagram", facebook: "Facebook", web: "Chat web" };
+    const extraThreads: Thread[] = rows.map(conversation => {
+      const conversationMessages: ChatMessage[] = allMessages.filter(item => item.conversation_id === conversation.id).map(item => ({ id: item.id, text: item.body || "[Mensaje multimedia]", direction: item.direction as "inbound" | "outbound", createdAt: item.created_at }));
+      return { id: conversation.id, name: names.get(conversation.contact_id) || conversation.external_thread_id || "Contacto", channel: channelLabels[conversation.channel] || conversation.channel, preview: conversationMessages.at(-1)?.text || "Sin mensajes", contactId: conversation.contact_id || "", externalThreadId: conversation.external_thread_id || "", handlingMode: (conversation.handling_mode || "bot") as Thread["handlingMode"], assignedTo: conversation.assigned_to || "", unread: conversationMessages.filter(item => item.direction === "inbound" && new Date(item.createdAt) > new Date(reads.get(conversation.id) || 0)).length, messages: conversationMessages };
+    });
+    setThreads(current => [...current, ...extraThreads]);
+    setConversationPage(page => page + 1);
+    setHasMoreConversations(extraThreads.length === 100);
+  }
   function loadOlderMessages() {
     const container = messagesRef.current;
     const previousHeight = container?.scrollHeight || 0;
@@ -833,7 +893,7 @@ const taskSources = new Map<string, Task["source"]>();
     </aside>
     <main className="main">
       {supportMode&&<div className="support-mode-banner"><strong>Modo soporte:</strong> estás operando dentro de {account.company}. Todas las acciones quedan registradas.<a href="/admin">Volver al panel</a></div>}
-      <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="topbar-actions"><div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div>{isClientAdmin&&<NotificationBell refreshKey={bellRefresh} onOpen={openOwnerNotification} onSeeAll={()=>openSettings("control")} />}</div></header>
+      <header className="topbar"><div><p className="eyebrow">GAVRION CRM</p><h1>{labels[view]}</h1></div><div className="topbar-actions">{tenantOptions.length > 1 && <label className="tenant-switcher"><span>Empresa activa</span><select value={tenantId} onChange={event => { const next = event.target.value; document.cookie = `gavrion_active_tenant=${encodeURIComponent(next)};path=/;max-age=2592000;samesite=lax`; const params = new URLSearchParams(window.location.search); params.set("tenantId", next); window.location.assign(`${window.location.pathname}?${params.toString()}`); }}>{tenantOptions.map(option => <option value={option.id} key={option.id}>{option.name}</option>)}</select></label>}<div className="global-search-wrap"><label className="search">⌕ <input value={globalQuery} onChange={e=>{setGlobalQuery(e.target.value);setSearchOpen(true)}} onFocus={()=>setSearchOpen(true)} onKeyDown={e=>{if(e.key==="Escape")setSearchOpen(false)}} placeholder="Buscar clientes, mensajes..." /></label>{searchOpen&&globalQuery.trim()&&<div className="search-results open" role="listbox">{globalResults.length ? globalResults.map(result=><button type="button" className="search-result" key={result.id} onMouseDown={event=>event.preventDefault()} onClick={()=>openSearchResult(result)}><span className="search-result-icon">{result.type[0]}</span><div><strong>{result.title}</strong><small>{result.detail}</small></div><span className="search-result-type">{result.type}</span></button>) : <div className="search-empty">No encontramos resultados para “{globalQuery}”.</div>}</div>}</div>{isClientAdmin&&<NotificationBell refreshKey={bellRefresh} onOpen={openOwnerNotification} onSeeAll={()=>openSettings("control")} />}</div></header>
       {view === "inicio" && <ExecutiveDashboard
         metrics={dashboardMetrics}
         activity={activity}
@@ -855,7 +915,7 @@ const taskSources = new Map<string, Task["source"]>();
       {view === "conversaciones" && <section className="view active">
         <div className="section-heading"><div><h2>Bandeja unificada</h2><p>{totalUnread ? `${totalUnread} mensaje${totalUnread===1?"":"s"} sin leer` : "Todas las conversaciones están al día"}.</p></div><div className="section-actions"><button className="secondary-button" onClick={exportConversations}>Descargar CSV</button><button className="secondary-button" onClick={enableNotifications}>Activar notificaciones</button></div></div>
         {currentThread ? <div className="inbox-layout">
-          <aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span>{thread.unread>0?<i className="unread-badge">{thread.unread}</i>:<time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time>}</button>)}</aside>
+          <aside className="thread-list">{threads.map((thread,index)=><button key={thread.id} className={`thread ${selectedThread===index?"active":""}`} onClick={()=>setSelectedThread(index)}><span className="avatar">{thread.name.split(" ").map(x=>x[0]).slice(0,2).join("")}</span><span className="thread-info"><h4>{thread.name}</h4><p>{thread.preview}</p></span>{thread.unread>0?<i className="unread-badge">{thread.unread}</i>:<time>{thread.handlingMode==="waiting_agent"?"Requiere agente":thread.handlingMode==="human"?"Humano":"IA"}</time>}</button>)}{hasMoreConversations && <button type="button" className="load-more" onClick={()=>void loadMoreConversations()}>Cargar más conversaciones</button>}</aside>
           <article className="chat-panel"><div className="chat-header"><span className="avatar">{currentThread.name[0]}</span><div><strong>{currentThread.name}</strong><small>{currentThread.channel} · {currentThread.handlingMode==="waiting_agent"?"esperando agente":currentThread.handlingMode==="human"?"atención humana":"asistente activo"}</small></div></div><div className="messages" ref={messagesRef}>{hasOlderMessages&&<button type="button" className="load-older" onClick={loadOlderMessages}>Cargar 50 mensajes anteriores</button>}{visibleMessages.map((item,index)=>{const currentDate=new Date(item.createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"});const previousDate=index?new Date(visibleMessages[index-1].createdAt).toLocaleDateString("es-HN",{day:"numeric",month:"long",year:"numeric"}):"";return <span className="message-group" key={item.id}>{currentDate!==previousDate&&<span className="message-date">{currentDate}</span>}<span className={`message ${item.direction==="outbound"?"out":"in"}`}>{item.text}<time>{new Date(item.createdAt).toLocaleTimeString("es-HN",{hour:"2-digit",minute:"2-digit"})}</time></span></span>})}</div><form className="composer" onSubmit={sendMessage}><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Escribe un mensaje..."/><button className="send-button" aria-label="Enviar">➤</button></form></article>
           <aside className="contact-panel"><div className="contact-hero"><span className="avatar">{currentThread.name[0]}</span><h3>{currentThread.name}</h3><p>{currentThread.externalThreadId}</p></div><div className="detail-group"><h4>Atención</h4><span className={`tag handling-${currentThread.handlingMode}`}>{currentThread.handlingMode==="waiting_agent"?"Requiere agente":currentThread.handlingMode==="human"?"Atención humana":"Asistente activo"}</span><div className="handoff-actions">{canOperateSales&&currentThread.handlingMode!=="human"&&<button className="primary-button" onClick={()=>setConversationMode("human")}>Tomar conversación</button>}{canOperateSales&&currentThread.handlingMode!=="bot"&&<button className="secondary-button" onClick={()=>setConversationMode("bot")}>Devolver al asistente</button>}</div></div><div className="detail-group"><h4>Responsable</h4><select disabled={!canOperateSales} className="select assignment-select" value={currentThread.assignedTo} onChange={event=>assignConversation(event.target.value)}><option value="">Asistente automático</option>{teamMembers.filter(member=>member.role!=="viewer").map(member=><option key={member.id} value={member.id}>{member.name}</option>)}</select></div><div className="detail-group"><h4>Canal</h4><span className="tag">{currentThread.channel}</span><span className="tag">Conversación real</span></div></aside>
         </div> : <div className="empty-feature"><div className="feature-visual">◫</div><h3>Aún no hay conversaciones</h3><p>Cuando llegue el primer mensaje aparecerá automáticamente en esta bandeja.</p></div>}
@@ -864,7 +924,7 @@ const taskSources = new Map<string, Task["source"]>();
       {view === "equipo" && isClientAdmin && <section className="view active">
         <div className="section-heading"><div><h2>Equipo y permisos</h2><p>Gestiona quién accede al CRM y qué conversaciones atiende.</p></div></div>
         <div className="team-tabs" role="tablist" aria-label="Equipo y cuenta"><button type="button" className={teamTab === "members" ? "active" : ""} onClick={() => setTeamTab("members")}>Integrantes</button><button type="button" className={teamTab === "account" ? "active" : ""} onClick={() => setTeamTab("account")}>Mi cuenta</button></div>
-        {teamTab === "members" && <div className="team-tab-content"><div className="team-workload-grid">{teamMembers.map(member=>{const workload=(member.workload?.conversations||0)+(member.workload?.tasks||0)+(member.workload?.deals||0);const targets=teamMembers.filter(candidate=>candidate.id!==member.id&&candidate.active!==false);return <article className={`panel member-workload ${member.active===false?"member-inactive":""}`} key={`work-${member.id}`}><div><strong>{member.name}</strong><span className={`status ${member.invitationStatus==="pending"?"lead":member.online?"online":"client"}`}>{member.invitationStatus==="pending"?"Invitación pendiente":member.active===false?"Sin acceso":member.online?"Conectado":"Activo"}</span></div><p><b>{member.workload?.conversations||0}</b> conversaciones · <b>{member.workload?.tasks||0}</b> tareas · <b>{member.workload?.deals||0}</b> oportunidades</p>{member.lastSeenAt&&<small className="member-last-seen">Último acceso: {new Date(member.lastSeenAt).toLocaleString("es-HN")}</small>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&member.active!==false&&<div className="member-reassign"><select className="select" value={reassignTargets[member.id]||""} onChange={event=>setReassignTargets(current=>({...current,[member.id]:event.target.value}))}><option value="">Reasignar trabajo…</option>{targets.map(target=><option key={target.id} value={target.id}>{target.name}</option>)}</select><button type="button" className="ghost-button" disabled={!workload} onClick={()=>void reassignMember(member)}>Reasignar</button></div>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&<button className={member.active===false?"ghost-button":"danger-button"} onClick={()=>void toggleMember(member)}>{member.active===false?"Reactivar acceso":workload?"Desactivar y reasignar":"Desactivar acceso"}</button>}</article>})}</div>
+        {teamTab === "members" && <div className="team-tab-content"><div className="team-workload-grid">{teamMembers.map(member=>{const workload=(member.workload?.conversations||0)+(member.workload?.tasks||0)+(member.workload?.deals||0);const targets=teamMembers.filter(candidate=>candidate.id!==member.id&&candidate.active!==false);return <article className={`panel member-workload ${member.active===false?"member-inactive":""}`} key={`work-${member.id}`}><div><strong>{member.name}</strong><span className={`status ${member.invitationStatus==="pending"?"lead":member.online?"online":"client"}`}>{member.invitationStatus==="pending"?"Invitación pendiente":member.active===false?"Sin acceso":member.online?"Conectado":"Activo"}</span></div><p><b>{member.workload?.conversations||0}</b> conversaciones · <b>{member.workload?.tasks||0}</b> tareas · <b>{member.workload?.deals||0}</b> oportunidades</p>{member.lastSeenAt&&<small className="member-last-seen">Último acceso: {new Date(member.lastSeenAt).toLocaleString("es-HN")}</small>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&member.active!==false&&<div className="member-reassign"><select className="select" value={reassignTargets[member.id]||""} onChange={event=>setReassignTargets(current=>({...current,[member.id]:event.target.value}))}><option value="">Reasignar trabajo…</option>{targets.map(target=><option key={target.id} value={target.id}>{target.name}</option>)}</select><button type="button" className="ghost-button" disabled={!workload} onClick={()=>void reassignMember(member)}>Reasignar</button></div>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&<button className={member.active===false?"ghost-button":"danger-button"} onClick={()=>void toggleMember(member)}>{member.active===false?"Reactivar acceso":workload?"Desactivar y reasignar":"Desactivar acceso"}</button>}{member.role!=="owner"&&["owner","admin"].includes(currentRole)&&<details className="member-permissions"><summary>Permisos específicos</summary><div className="member-permission-list">{teamPermissionOptions.map(permission=><label key={permission}><input type="checkbox" checked={member.permissions?.[permission] ?? hasTenantPermission(member.role, permission)} disabled={savingPermission===`${member.id}:${permission}`} onChange={event=>void updateMemberPermission(member, permission, event.target.checked)} />{tenantPermissionLabels[permission]}</label>)}</div></details>}</article>})}</div>
         {["owner","admin"].includes(currentRole) && <form className="team-invite panel" onSubmit={inviteMember}><label>Correo del integrante<input required type="email" value={inviteEmail} onChange={event=>setInviteEmail(event.target.value)} placeholder="asesor@empresa.com" /></label><label>Rol<select className="select" value={inviteRole} onChange={event=>setInviteRole(event.target.value as TeamMember["role"])}><option value="admin">Administrador</option><option value="agent">Agente</option><option value="viewer">Consulta</option></select></label><button className="primary-button" disabled={inviting}>{inviting?"Enviando…":"Invitar integrante"}</button></form>}
         <article className="panel table-panel team-table"><div className="panel-header"><div><h3>Integrantes</h3><p>{teamMembers.length} usuario{teamMembers.length===1?"":"s"} en esta empresa</p></div></div><div className="table-scroll"><table><thead><tr><th>Integrante</th><th>Correo</th><th>Rol</th></tr></thead><tbody>{teamMembers.map(member=><tr key={member.id}><td><div className="contact-cell"><span className="avatar">{member.name.charAt(0).toUpperCase()}</span><span><strong>{member.name}</strong>{member.id===userId&&<small>Tu cuenta</small>}</span></div></td><td>{member.email}</td><td>{member.role==="owner"?<span className="status client">Propietario</span>:<select className="select team-role" value={member.role} disabled={!(["owner","admin"].includes(currentRole))} onChange={event=>changeMemberRole(member,event.target.value as TeamMember["role"])}><option value="admin">Administrador</option><option value="agent">Agente</option><option value="viewer">Consulta</option></select>}</td></tr>)}</tbody></table></div></article></div>}
         {teamTab === "account" && <AccountTab />}
