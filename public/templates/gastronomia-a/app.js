@@ -65,6 +65,21 @@ function renderMenuItems(items){
   qa('.menu-tabs button').forEach(button=>button.onclick=()=>{qa('.menu-tabs button').forEach(x=>x.classList.remove('active'));button.classList.add('active');filterMenu(button.dataset.category||'');});
   filterMenu(qa('.menu-tabs button')[0]?.dataset.category||'');
 }
+async function loadLiveMenu(){
+  const integrations=config.integrations||{};
+  const base=String(integrations.crmBaseUrl||'').replace(/\/$/,'');
+  const key=String(integrations.tenantKey||'');
+  if(!integrations.useLiveCatalog||!base||!key)return;
+  try{
+    const response=await fetch(`${base}/api/public/catalog/${encodeURIComponent(key)}`,{cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok||!Array.isArray(data.products)||!data.products.length)return;
+    const liveItems=data.products.map((item,index)=>({id:item.id||item.sku||`live-${index}`,category:'Productos',name:item.name,description:item.description||'',price:Number(item.price||0),active:true,imageUrl:''}));
+    config.menu={...(config.menu||{}),categories:['Productos'],items:liveItems};
+    q('.menu-tabs').innerHTML='<button class="active" data-category="Productos">Productos</button>';
+    renderMenuItems(liveItems);
+  }catch(error){console.warn('No se pudo sincronizar el menú del CRM',error)}
+}
 function isAvailable(item){const availability=item.availability;if(!availability)return true;const days=['dom','lun','mar','mié','jue','vie','sáb'];const now=new Date(),day=days[now.getDay()],time=now.toTimeString().slice(0,5);return availability.days?.includes(day)&&time>=availability.start&&time<=availability.end}
 function renderLocationAndGallery(){
   const gallery=config.gallery||[],contact=config.contact||{},social=config.social||{};
@@ -78,6 +93,7 @@ function renderLocationAndGallery(){
 }
 
 applySiteConfig();
+void loadLiveMenu();
 
 q('#tableLabel').textContent = `MENÚ DIGITAL · MESA ${table}`;
 q('#cartTableLabel').textContent = `MESA ${table} · PEDIDO DIGITAL`;
@@ -137,7 +153,10 @@ async function scanFrame(){
   if(stream) requestAnimationFrame(scanFrame);
 }
 function stopScanner(){ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=undefined; } q('#scannerVideo').classList.remove('active'); q('.scanner-frame').classList.remove('scanning'); }
-function applyLayout(){const layout=window.GAVRION_SITE?.layout?.sections||[];const root=document.querySelector('main');if(!root)return;layout.forEach((item)=>{const node=document.getElementById(item.id)||(item.id==='proof'?document.querySelector('.proof'):item.id==='contacto'?document.querySelector('footer'):null);if(!node)return;node.hidden=item.visible===false;if(item.visible!==false)root.append(node)})}
+function renderCustomBlocks(){const container=q('#custom-blocks');if(!container)return;if(!document.getElementById('gavrion-block-styles')){const style=document.createElement('style');style.id='gavrion-block-styles';style.textContent='.custom-block{padding:54px 7.5%;background:var(--cream);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.custom-block h2{max-width:760px;margin:8px 0 10px;font:600 clamp(30px,4vw,50px)/1.08 "Playfair Display",Georgia,serif}.custom-block p{max-width:700px;color:#635e54;font-size:17px;line-height:1.6}.custom-block-kicker{color:var(--rust);font-size:11px;font-weight:700;letter-spacing:1.5px}.custom-block-button{border:0;padding:13px 18px;background:var(--olive);color:#fff;font:600 13px "DM Sans";cursor:pointer}@media(max-width:720px){.custom-block{padding:44px 6%}}';document.head.append(style)}const blocks=config.layout?.blocks||[];container.innerHTML=blocks.filter((block)=>block.visible!==false&&block.title).map((block)=>`<article class="custom-block custom-block-${block.type}"><span class="custom-block-kicker">${block.type==='cta'?'SIGAMOS CONVERSANDO':'DESTACADO'}</span><h2>${String(block.title).replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}</h2><p>${String(block.body||'').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}</p>${block.type==='cta'?`<button class="custom-block-button" data-custom-block-contact="1">${String(block.buttonLabel||'Hablar con el equipo').replace(/[&<>"']/g,(char)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]))}</button>`:''}</article>`).join('');qa('[data-custom-block-contact]').forEach((button)=>button.onclick=()=>{const forms=crmForms();if(forms&&forms.has('contact'))forms.open('contact');else q('#openChat').click()})}
+function applyLayout(){const layout=window.GAVRION_SITE?.layout?.sections||[];const root=document.querySelector('main');if(!root)return;layout.forEach((item)=>{const node=document.getElementById(item.id)||(item.id==='bloques'?document.querySelector('#custom-blocks'):item.id==='proof'?document.querySelector('.proof'):item.id==='contacto'?document.querySelector('footer'):null);if(!node)return;node.hidden=item.visible===false;if(item.visible!==false)root.append(node)})}
+ensureCustomBlockMount();
+renderCustomBlocks();
 applyLayout();
 function initVipMotion(){
   let observer;
@@ -153,3 +172,4 @@ function initVipMotion(){
   if('MutationObserver' in window){new MutationObserver(attach).observe(q('.menu-grid'),{childList:true});}
 }
 initVipMotion();
+function ensureCustomBlockMount(){if(q('#custom-blocks'))return;const node=document.createElement('section');node.id='custom-blocks';const contact=document.querySelector('.proof')||document.querySelector('footer');if(contact?.parentElement)contact.parentElement.insertBefore(node,contact)}
