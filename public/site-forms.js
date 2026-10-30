@@ -53,6 +53,10 @@
     "@media(max-width:640px){.grid{grid-template-columns:1fr}.section{padding:44px 16px}.card{padding:18px}}";
 
   var state = { forms: [], company: "", ready: false, startedAt: Date.now() };
+  function requestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+    return "web-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+  }
   var readyResolve;
   var ready = new Promise(function (resolve) { readyResolve = resolve; });
 
@@ -65,6 +69,7 @@
     var extra = {};
     if (prefill && prefill.items_json) extra.items_json = prefill.items_json;
     var startedAt = Date.now();
+    var requestKey = requestId();
     var card = el("div", { className: "card" });
     var wrappers = {};
 
@@ -133,7 +138,7 @@
       showErrors(errors);
       if (Object.keys(errors).length) return;
       submit.disabled = true; submit.textContent = "Enviando\u2026";
-      var payload = { form: form.type, values: Object.assign({}, values, extra), visitorId: visitorId(), pageUrl: location.href, startedAt: startedAt, website: formNode.querySelector('[name="website"]').value };
+      var payload = { form: form.type, values: Object.assign({}, values, extra), visitorId: visitorId(), pageUrl: location.href, startedAt: startedAt, requestId: requestKey, website: formNode.querySelector('[name="website"]').value };
       fetch(api + "/api/public/forms/" + encodeURIComponent(key), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
         .then(function (response) { return response.json().catch(function () { return {}; }).then(function (data) { return { ok: response.ok, data: data }; }); })
         .then(function (result) {
@@ -146,7 +151,7 @@
           card.appendChild(el("div", { className: "success", role: "status" }, [
             el("div", { className: "icon", text: "\u2713" }), el("h3", { text: "\u00a1Solicitud enviada!" }), el("p", { text: result.data.message || form.successMessage }),
             result.data.reference && result.data.reference !== "\u2014" ? el("small", { text: "Referencia: " + result.data.reference }) : null,
-            el("div", {}, [el("button", { className: "again", type: "button", text: "Enviar otra solicitud", onclick: function () { values = {}; form.fields.forEach(function (f) { values[f.name] = f.defaultValue || ""; }); extra = {}; startedAt = Date.now(); render(); } })])
+            el("div", {}, [el("button", { className: "again", type: "button", text: "Enviar otra solicitud", onclick: function () { values = {}; form.fields.forEach(function (f) { values[f.name] = f.defaultValue || ""; }); extra = {}; startedAt = Date.now(); requestKey = requestId(); render(); } })])
           ]));
           window.dispatchEvent(new CustomEvent("gavrion-forms:submitted", { detail: { form: form.type, reference: result.data.reference } }));
           if (onDone) onDone(result.data);
