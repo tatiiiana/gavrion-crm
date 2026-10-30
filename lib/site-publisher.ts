@@ -24,7 +24,7 @@ function validDomain(value: string) {
 export async function republishAssignedSite(admin: SupabaseClient, project: PublishedSite, requestUrl: string) {
   const bound = await bindSiteToTenant(admin, project.tenant_id, project.configuration, requestUrl);
   if (bound.error) throw new Error(bound.error);
-  const templateDir = getSiteTemplate(project.template_key)?.key === "inmobiliaria-a" ? "inmobiliaria-a" : "gastronomia-a";
+  const templateDir = getSiteTemplate(project.template_key)?.key || "gastronomia-a";
   const source = path.join(process.cwd(), "public", "templates", templateDir);
   const [html, css, app] = await Promise.all(["index.html", "styles.css", "app.js"].map((file) => readFile(path.join(source, file), "utf8")));
   const config = removePrivateConfigKeys(sanitizeSiteConfig({ ...bound.config, template: project.template_key }));

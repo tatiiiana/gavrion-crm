@@ -17,7 +17,9 @@ export async function bindSiteToTenant(admin: SupabaseClient, tenantId: string |
   const configured = String(integrations.crmBaseUrl || "").replace(/\/$/, "");
   const isLocal = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(url);
   const crmBaseUrl = (process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "") || (configured && !isLocal(configured) ? configured : origin);
-  return { config: { ...config, integrations: { ...integrations, crmBaseUrl, tenantKey: String(data.widget_key) } } };
+  const template = String(config.template || "");
+  const useLiveCatalog = ["gastronomia-a", "comercio-a", "hoteles-a"].includes(template) || integrations.useLiveCatalog === true;
+  return { config: { ...config, integrations: { ...integrations, crmBaseUrl, tenantKey: String(data.widget_key), useLiveCatalog } } };
 }
 
 type CompanySettingsForSite = {
