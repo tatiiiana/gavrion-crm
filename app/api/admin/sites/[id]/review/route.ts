@@ -2,6 +2,7 @@ import {NextResponse} from "next/server";
 import {requireSitePermission} from "@/lib/site-access";
 import {sanitizeSiteConfig} from "@/lib/site-builder";
 import { notifyTenantAdmins } from "@/lib/tenant-notifications";
+import { provisionPendingOwner } from "@/lib/owner-provisioning";
 
 const reviewerRoles=["superadmin","implementer"];
 
@@ -36,6 +37,19 @@ export async function PATCH(request:Request,{params}:{params:Promise<{id:string}
   const status=action==="approve"?"ready":"draft";
   const {data,error}=await access.admin.from("site_projects").update({status,review_note:action==="approve"?null:reviewNote,reviewed_by:access.user.id,reviewed_at:new Date().toISOString()}).eq("id",id).select("id,status,review_note,reviewed_by,reviewed_at,updated_at").single();
   if(error)return NextResponse.json({error:error.code==="42703"?"Aplica la migración 025_site_review_workflow.sql en Supabase.":error.message},{status:400});
+  if(action==="approve"){
+    try{await provisionPendingOwner(access.admin,current.tenant_id,request.url)}
+    catch(cause){
+      const reason=cause instanceof Error?cause.message:"No se pudo preparar la invitación al propietario.";
+      await access.admin.from("site_projects").update({status:"review",review_note:reason}).eq("id",id);
+      return NextResponse.json({error:reason},{status:409});
+    }
+    const tenantReady=await access.admin.from("tenants").update({implementation_status:"ready"}).eq("id",current.tenant_id);
+    if(tenantReady.error){
+      await access.admin.from("site_projects").update({status:"review",review_note:tenantReady.error.message}).eq("id",id);
+      return NextResponse.json({error:tenantReady.error.message},{status:409});
+    }
+  }
   if (action === "reject") void notifyTenantAdmins({ tenantId: current.tenant_id, type: "site_returned", title: "El sitio requiere ajustes", body: reviewNote, entityType: "site_project", entityId: id });
   return NextResponse.json(data);
 }

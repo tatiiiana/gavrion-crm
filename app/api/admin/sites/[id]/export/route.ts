@@ -16,7 +16,7 @@ export async function GET(request:Request,{params}:{params:Promise<{id:string}>}
   if(!access)return NextResponse.json({error:"No tienes permiso para exportar este proyecto."},{status:403});
   const {data,error}=await access.admin.from("site_projects").select("id,tenant_id,name,slug,template_key,configuration").eq("id",id).maybeSingle();
   if(error||!data)return NextResponse.json({error:error?.message||"El proyecto no existe."},{status:404});
-  const templateDir=getSiteTemplate(String(data.template_key||""))?.key==="inmobiliaria-a"?"inmobiliaria-a":"gastronomia-a";
+  const templateDir=getSiteTemplate(String(data.template_key||""))?.key||"gastronomia-a";
   const source=path.join(process.cwd(),"public","templates",templateDir);
   try{
     const [html,css,app]=await Promise.all([readFile(path.join(source,"index.html")),readFile(path.join(source,"styles.css")),readFile(path.join(source,"app.js"))]);

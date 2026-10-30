@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const { data: project } = await access.admin.from("site_projects").select("id,name,template_key,vercel_project_id").eq("id", id).maybeSingle();
   if (!project) return NextResponse.json({ error: "El proyecto no existe." }, { status: 404 });
   const configuration = removePrivateConfigKeys(sanitizeSiteConfig(version.configuration));
-  const templateDir = getSiteTemplate(project.template_key)?.key === "inmobiliaria-a" ? "inmobiliaria-a" : "gastronomia-a";
+  const templateDir = getSiteTemplate(project.template_key)?.key || "gastronomia-a";
   const source = path.join(process.cwd(), "public", "templates", templateDir);
   try {
     const [html, css, app] = await Promise.all(["index.html", "styles.css", "app.js"].map((file) => readFile(path.join(source, file), "utf8")));

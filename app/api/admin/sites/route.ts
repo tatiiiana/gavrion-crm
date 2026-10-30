@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requirePlatformPermission } from "@/lib/platform-access";
 import { cleanSiteSlug, sanitizeSiteConfig,siteConfigForTemplate } from "@/lib/site-builder";
 import {getSiteTemplate} from "@/lib/site-templates/catalog";
+import {provisionPendingOwner} from "@/lib/owner-provisioning";
 
 function compatibleBusinessType(value:string){
   return value === "gastronomy" ? "restaurant" : value;
@@ -53,13 +54,17 @@ export async function POST(request:Request){
 export async function PATCH(request:Request){
   const body=await request.json();const id=String(body.id||"");const status=String(body.status||"draft");
   if(!id||!["draft","review","ready","exported","published"].includes(status))return NextResponse.json({error:"Datos inválidos."},{status:400});
-  const lookupAdmin=(await requirePlatformPermission("sites.read"))?.admin;if(!lookupAdmin)return NextResponse.json({error:"Acceso denegado."},{status:403});const project=await lookupAdmin.from("site_projects").select("tenant_id").eq("id",id).maybeSingle();if(!project.data)return NextResponse.json({error:"Proyecto inexistente."},{status:404});const access=await requirePlatformPermission("sites.write",project.data.tenant_id);if(!access)return NextResponse.json({error:"No tienes permiso para editar este proyecto."},{status:403});
+  const lookupAdmin=(await requirePlatformPermission("sites.read"))?.admin;if(!lookupAdmin)return NextResponse.json({error:"Acceso denegado."},{status:403});const project=await lookupAdmin.from("site_projects").select("tenant_id,status").eq("id",id).maybeSingle();if(!project.data)return NextResponse.json({error:"Proyecto inexistente."},{status:404});const access=await requirePlatformPermission("sites.write",project.data.tenant_id);if(!access)return NextResponse.json({error:"No tienes permiso para editar este proyecto."},{status:403});
   if(status==="ready"&&!(["superadmin","implementer"] as string[]).includes(access.role))return NextResponse.json({error:"El vendedor debe enviar el sitio a revisión; la aprobación corresponde al Superadmin o Implementador."},{status:403});
   const configuration=sanitizeSiteConfig(body.configuration);
   const current=await access.admin.from("site_project_versions").select("version").eq("site_project_id",id).order("version",{ascending:false}).limit(1).maybeSingle();
   const version=(current.data?.version||0)+1;
   const {data,error}=await access.admin.from("site_projects").update({configuration,status,name:String(body.name||"Sitio").trim().slice(0,120)}).eq("id",id).select().single();
   if(error)return NextResponse.json({error:error.message},{status:400});
+  if(status==="ready"){
+    try{await provisionPendingOwner(access.admin,project.data.tenant_id,request.url);const tenantReady=await access.admin.from("tenants").update({implementation_status:"ready"}).eq("id",project.data.tenant_id);if(tenantReady.error)throw new Error(tenantReady.error.message)}
+    catch(cause){const reason=cause instanceof Error?cause.message:"No se pudo preparar la entrega al propietario.";await access.admin.from("site_projects").update({status:project.data.status,review_note:reason}).eq("id",id);return NextResponse.json({error:reason},{status:409})}
+  }
   await access.admin.from("site_project_versions").insert({site_project_id:id,version,configuration,created_by:access.user.id});
   return NextResponse.json({...data,version});
 }

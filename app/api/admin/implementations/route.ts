@@ -29,7 +29,14 @@ export async function GET() {
     const user = userMap.get(member.user_id);
     return [member.tenant_id, { id: member.user_id, email: user?.email || "", name: String(user?.user_metadata?.full_name || user?.email?.split("@")[0] || "Propietario") }];
   }));
-  return NextResponse.json((tenants || []).map(tenant => ({ ...tenant, owner: ownerMap.get(tenant.id) || null })));
+  return NextResponse.json((tenants || []).map(tenant => {
+    const existing = ownerMap.get(tenant.id);
+    if (existing) return { ...tenant, owner: existing };
+    const settings = tenant.settings && typeof tenant.settings === "object" ? tenant.settings as Record<string, unknown> : {};
+    const onboarding = settings.onboarding && typeof settings.onboarding === "object" ? settings.onboarding as Record<string, unknown> : {};
+    const pending = onboarding.pending_owner && typeof onboarding.pending_owner === "object" ? onboarding.pending_owner as Record<string, unknown> : null;
+    return { ...tenant, owner: pending ? { id: "pending", email: String(pending.email || ""), name: String(pending.name || "Propietario"), invitationStatus: "pending" } : null };
+  }));
 }
 
 export async function POST(request: Request) {
@@ -60,7 +67,7 @@ export async function POST(request: Request) {
   const slug = `${cleanSlug(name) || "empresa"}-${crypto.randomUUID().slice(0, 6)}`;
   const { data: tenant, error: tenantError } = await admin.from("tenants").insert({
     name, slug, template_key: templateKey, implementation_template_id:selectedTemplate.id, implementation_status: "draft",
-    settings: { ...(configuration.tenant_settings || {}), modules, onboarding: { created_by: user.id, created_at: new Date().toISOString(), template_id:selectedTemplate.id, site_template_key:requestedSiteTemplateKey || null } }
+    settings: { ...(configuration.tenant_settings || {}), modules, onboarding: { created_by: user.id, created_at: new Date().toISOString(), template_id:selectedTemplate.id, site_template_key:requestedSiteTemplateKey || null, pending_owner: { name: ownerName, email: ownerEmail, status: "pending" } } }
   }).select("id,name,slug,widget_key,template_key,implementation_status,settings,created_at").single();
   if (tenantError || !tenant) return NextResponse.json({ error: tenantError?.message || "No se pudo crear la empresa." }, { status: 400 });
   if(access.role!=="superadmin")await admin.from("platform_staff_tenants").upsert({user_id:user.id,tenant_id:tenant.id});
@@ -89,41 +96,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error:siteError?.message || "No se pudo preparar el sitio web." }, { status:400 });
   }
 
-  let ownerCreatedByFlow = false;
-  let owner = (await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })).data.users.find(item => item.email?.toLowerCase() === ownerEmail);
-  if (owner) {
-    const { data: existingMemberships } = await admin.from("memberships").select("tenant_id").eq("user_id", owner.id);
-    if ((existingMemberships || []).length) {
-      await admin.from("tenants").delete().eq("id", tenant.id);
-      return NextResponse.json({ error: "Ese correo ya pertenece a otra empresa. Usa un correo distinto para el propietario." }, { status: 409 });
-    }
-  }
-  if (!owner) {
-    const origin = new URL(request.url).origin;
-    const invited = await admin.auth.admin.inviteUserByEmail(ownerEmail, { redirectTo: `${origin}/invite`, data: { full_name: ownerName, company_name: name, provisioned_by_gavrion: true } });
-    if (invited.error || !invited.data.user) {
-      await admin.from("tenants").delete().eq("id", tenant.id);
-      const detail=invited.error?.message || "No se pudo invitar al propietario.";
-      const limited=/rate|limit|too many|email rate/i.test(detail);
-      return NextResponse.json({ error:limited?"Supabase alcanzó el límite temporal de correos de invitación. Espera antes de intentar nuevamente o configura SMTP propio.":`No se pudo enviar la invitación: ${detail}` }, { status: limited?429:400 });
-    }
-    owner = invited.data.user;
-    ownerCreatedByFlow = true;
-    // El trigger de registro crea un tenant temporal; se elimina al reasignar al usuario.
-    const { data: generated } = await admin.from("memberships").select("tenant_id").eq("user_id", owner.id).neq("tenant_id", tenant.id);
-    await admin.from("memberships").delete().eq("user_id", owner.id);
-    const generatedIds = (generated || []).map(item => item.tenant_id);
-    if (generatedIds.length) await admin.from("tenants").delete().in("id", generatedIds);
-  }
-  const { error: membershipError } = await admin.from("memberships").upsert({ tenant_id: tenant.id, user_id: owner.id, role: "owner" }, { onConflict: "tenant_id,user_id" });
-  if (membershipError) {
-    if (ownerCreatedByFlow) await admin.auth.admin.deleteUser(owner.id);
-    await admin.from("tenants").delete().eq("id", tenant.id);
-    return NextResponse.json({ error: membershipError.message }, { status: 400 });
-  }
   const audit = await recordPlatformAudit(admin, { actorUserId:user.id, targetTenantId:tenant.id, action:"create", entityType:"implementation", entityId:tenant.id, changes:{ templateId:selectedTemplate.id, siteTemplateKey:requestedSiteTemplateKey, siteProjectId:site.id, modules } });
   if (audit) return NextResponse.json({ error:audit.message }, { status:500 });
-  return NextResponse.json({ ...tenant, owner: { id: owner.id, email: ownerEmail, name: ownerName }, site }, { status: 201 });
+  return NextResponse.json({ ...tenant, owner: { id: "pending", email: ownerEmail, name: ownerName, invitationStatus: "pending" }, site }, { status: 201 });
 }
 
 export async function PATCH(request: Request) {

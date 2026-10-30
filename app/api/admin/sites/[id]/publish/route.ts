@@ -12,7 +12,7 @@ import { bindSiteToTenant } from "@/lib/site-binding";
 function validDomain(value: string) { return value.length <= 253 && /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(value); }
 
 async function bundle(project: { name: string; template_key: string; configuration: unknown }) {
-  const templateDir = getSiteTemplate(project.template_key)?.key === "inmobiliaria-a" ? "inmobiliaria-a" : "gastronomia-a";
+  const templateDir = getSiteTemplate(project.template_key)?.key || "gastronomia-a";
   const source = path.join(process.cwd(), "public", "templates", templateDir);
   const [html, css, app] = await Promise.all(["index.html", "styles.css", "app.js"].map((file) => readFile(path.join(source, file), "utf8")));
   const config = removePrivateConfigKeys(sanitizeSiteConfig({ ...project.configuration as Record<string, unknown>, template: project.template_key }));
