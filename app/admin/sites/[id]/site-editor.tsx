@@ -62,7 +62,7 @@ export default function SiteEditor({ id }: { id: string }) {
         if (!projectsResponse.ok) throw new Error(projects.error || "No fue posible cargar el proyecto.");
         const found = (projects as Project[]).find((item) => item.id === id);
         if (!found) throw new Error("No se encontró el proyecto o fue eliminado.");
-        const templateDir = getSiteTemplate(found.template_key)?.key === "inmobiliaria-a" ? "inmobiliaria-a" : "gastronomia-a";
+        const templateDir = getSiteTemplate(found.template_key)?.key || "gastronomia-a";
         const [htmlResponse, cssResponse, jsResponse] = await Promise.all([
           fetch(`/templates/${templateDir}/index.html`),
           fetch(`/templates/${templateDir}/styles.css`),
