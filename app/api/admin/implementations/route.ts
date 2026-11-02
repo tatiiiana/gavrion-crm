@@ -13,10 +13,79 @@ function compatibleBusinessType(value: string) {
   return value === "gastronomy" ? "restaurant" : value;
 }
 
-export async function GET() {
+async function safeTenantCount(admin: ReturnType<typeof import("@/lib/supabase/admin").createAdminSupabase>, table: string, tenantId: string, filter?: (query: any) => any) {
+  let query = admin.from(table).select("id", { count: "exact", head: true }).eq("tenant_id", tenantId);
+  if (filter) query = filter(query);
+  const result = await query;
+  return result.error ? null : Number(result.count || 0);
+}
+
+export async function GET(request: Request) {
   const access = await requirePlatformPermission("companies.read");
   if (!access) return NextResponse.json({ error: "Acceso exclusivo para Superadministradores." }, { status: 403 });
   const { admin } = access;
+  const detailTenantId = new URL(request.url).searchParams.get("tenantId");
+  if (detailTenantId) {
+    if (access.tenantIds && !access.tenantIds.includes(detailTenantId)) return NextResponse.json({ error: "No tienes esta empresa asignada." }, { status: 403 });
+    const [tenantResult, ownerResult, teamResult, profileResult, siteResult, customizationResult, auditResult, platformAuditResult, channelsResult, calendarsResult, assistantResult] = await Promise.all([
+      admin.from("tenants").select("id,name,slug,plan,logo_url,widget_key,custom_domain,settings,template_key,implementation_template_id,implementation_status,status_reason,production_at,suspended_at,archived_at,created_at").eq("id", detailTenantId).maybeSingle(),
+      admin.from("memberships").select("user_id,role,active").eq("tenant_id", detailTenantId).eq("role", "owner").maybeSingle(),
+      admin.from("memberships").select("user_id,role,active,invitation_status").eq("tenant_id", detailTenantId).order("role"),
+      admin.from("company_profiles").select("legal_name,tax_id,legal_address,phone,public_email,website,timezone,business_hours,updated_at").eq("tenant_id", detailTenantId).maybeSingle(),
+      admin.from("site_projects").select("id,tenant_id,template_key,name,slug,status,published_url,custom_domain,domain_status,deployment_status,deployment_error,published_version,published_at,created_at,updated_at,configuration").eq("tenant_id", detailTenantId).is("archived_at", null).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+      admin.from("implementation_customizations").select("id,template_id,template_version,status,review_note,reviewed_at,applied_at,updated_at").eq("tenant_id", detailTenantId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+      admin.from("audit_logs").select("id,actor_user_id,action,entity_type,entity_id,changes,created_at").eq("tenant_id", detailTenantId).order("created_at", { ascending: false }).limit(12),
+      admin.from("platform_audit_logs").select("id,actor_user_id,action,entity_type,entity_id,changes,created_at").eq("target_tenant_id", detailTenantId).order("created_at", { ascending: false }).limit(12),
+      admin.from("channel_connections").select("provider,status,last_error,last_error_at,last_ok_at,created_at").eq("tenant_id", detailTenantId),
+      admin.from("calendar_connections").select("provider,status,last_error,updated_at").eq("tenant_id", detailTenantId),
+      admin.from("assistant_settings").select("enabled,updated_at").eq("tenant_id", detailTenantId).maybeSingle()
+    ]);
+    if (tenantResult.error || !tenantResult.data) return NextResponse.json({ error: tenantResult.error?.message || "La empresa no existe." }, { status: 404 });
+    const [{ data: users }, { data: template }] = await Promise.all([
+      admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+      tenantResult.data.implementation_template_id ? admin.from("implementation_templates").select("id,name,business_type,current_version").eq("id", tenantResult.data.implementation_template_id).maybeSingle() : Promise.resolve({ data: null })
+    ]);
+    const userMap = new Map((users?.users || []).map(user => [user.id, user]));
+    const settings = tenantResult.data.settings && typeof tenantResult.data.settings === "object" ? tenantResult.data.settings as Record<string, unknown> : {};
+    const onboarding = settings.onboarding && typeof settings.onboarding === "object" ? settings.onboarding as Record<string, unknown> : {};
+    const pendingOwner = onboarding.pending_owner && typeof onboarding.pending_owner === "object" ? onboarding.pending_owner as Record<string, unknown> : null;
+    const ownerUser = ownerResult.data?.user_id ? userMap.get(ownerResult.data.user_id) : null;
+    const owner = ownerUser ? { id: ownerUser.id, name: String(ownerUser.user_metadata?.full_name || ownerUser.email?.split("@")[0] || "Propietario"), email: ownerUser.email || "", invitationStatus: "active" } : pendingOwner ? { id: "pending", name: String(pendingOwner.name || "Propietario"), email: String(pendingOwner.email || ""), invitationStatus: "pending" } : null;
+    const team = (teamResult.data || []).map(member => { const memberUser = userMap.get(member.user_id); return { id: member.user_id, name: String(memberUser?.user_metadata?.full_name || memberUser?.email?.split("@")[0] || "Usuario"), email: memberUser?.email || "", role: member.role, active: member.active !== false, invitationStatus: String(member.invitation_status || (member.active === false ? "revoked" : "accepted")) }; });
+    const countEntries = await Promise.all([
+      ["contacts", safeTenantCount(admin, "contacts", detailTenantId)],
+      ["conversations", safeTenantCount(admin, "conversations", detailTenantId)],
+      ["deals", safeTenantCount(admin, "deals", detailTenantId)],
+      ["pendingTasks", safeTenantCount(admin, "tasks", detailTenantId, query => query.is("completed_at", null))],
+      ["forms", safeTenantCount(admin, "site_form_submissions", detailTenantId)],
+      ["reservations", safeTenantCount(admin, "reservations", detailTenantId)],
+      ["orders", safeTenantCount(admin, "orders", detailTenantId)],
+      ["appointments", safeTenantCount(admin, "appointments", detailTenantId)],
+      ["properties", safeTenantCount(admin, "properties", detailTenantId)],
+      ["propertyInquiries", safeTenantCount(admin, "property_inquiries", detailTenantId)],
+      ["propertyVisits", safeTenantCount(admin, "property_visits", detailTenantId)],
+      ["quotes", safeTenantCount(admin, "quotes", detailTenantId)],
+      ["products", safeTenantCount(admin, "products", detailTenantId)]
+    ]);
+    const health = Object.fromEntries(countEntries);
+    const site = siteResult.data || null;
+    const channelRows = channelsResult.data || [];
+    const calendarRows = calendarsResult.data || [];
+    const connectionStatus = (row: { status?: string; last_error?: string|null } | undefined) => !row ? "pending" : row.status === "active" || row.status === "connected" ? "connected" : "error";
+    const hasChatbox = Boolean(tenantResult.data.widget_key && site && (site.configuration as Record<string, unknown> | null)?.integrations && ((site.configuration as Record<string, unknown>).integrations as Record<string, unknown>).useRealChatbox !== false);
+    const integrations = [
+      { key: "whatsapp", label: "WhatsApp", status: connectionStatus(channelRows.find(row => row.provider === "whatsapp")), detail: channelRows.find(row => row.provider === "whatsapp")?.last_error || "" },
+      { key: "facebook", label: "Facebook Messenger", status: connectionStatus(channelRows.find(row => row.provider === "facebook")), detail: channelRows.find(row => row.provider === "facebook")?.last_error || "" },
+      { key: "google", label: "Google Calendar", status: connectionStatus(calendarRows.find(row => row.provider === "google")), detail: calendarRows.find(row => row.provider === "google")?.last_error || "" },
+      { key: "assistant", label: "Asistente IA", status: assistantResult.data ? (assistantResult.data.enabled ? "connected" : "pending") : "pending", detail: "" },
+      { key: "chatbox", label: "Chatbox", status: hasChatbox ? "connected" : "pending", detail: "" },
+      { key: "site", label: "Sitio web", status: site?.status === "published" ? "connected" : "pending", detail: site?.status || "" },
+      { key: "domain", label: "Dominio", status: site?.custom_domain && site.domain_status === "verified" ? "connected" : "pending", detail: site?.custom_domain || "" }
+    ];
+    const actorName = (actorId: string|null) => { const actor = actorId ? userMap.get(actorId) : null; return actor?.user_metadata?.full_name || actor?.email || "Sistema"; };
+    const audit = [...(platformAuditResult.data || []).map(event => ({ id: `platform-${event.id}`, scope: "Plataforma", actor: actorName(event.actor_user_id), action: event.action, entityType: event.entity_type, createdAt: event.created_at, changeKeys: Object.keys(event.changes || {}) })), ...(auditResult.data || []).map(event => ({ id: `tenant-${event.id}`, scope: "Operación", actor: actorName(event.actor_user_id), action: event.action, entityType: event.entity_type, createdAt: event.created_at, changeKeys: Object.keys(event.changes || {}) }))].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, 16);
+    return NextResponse.json({ company: tenantResult.data, owner, team, profile: profileResult.data || null, template: template || null, site, customization: customizationResult.data || null, health, integrations, audit, lastActivityAt: audit[0]?.createdAt || tenantResult.data.created_at });
+  }
   let tenantQuery=admin.from("tenants").select("id,name,slug,plan,logo_url,settings,template_key,implementation_template_id,implementation_status,status_reason,production_at,suspended_at,archived_at,created_at").order("created_at", { ascending: false });if(access.tenantIds)tenantQuery=tenantQuery.in("id",access.tenantIds.length?access.tenantIds:["00000000-0000-0000-0000-000000000000"]);
   const [{ data: tenants, error }, { data: memberships }, { data: users }] = await Promise.all([
     tenantQuery,
