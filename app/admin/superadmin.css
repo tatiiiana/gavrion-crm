@@ -71,6 +71,7 @@
 .implementation-modal>form,.implementation-modal>.review-customization-modal{width:min(1040px,calc(100vw - 32px));max-height:calc(100dvh - 32px);margin:auto;overflow:auto}
 .company-detail-overlay{align-items:center;justify-content:center;padding:clamp(16px,4vh,36px)}
 .company-detail-modal{width:min(860px,calc(100vw - 32px));height:auto;max-height:calc(100dvh - 32px);margin:auto;border-radius:20px;overflow:auto;box-shadow:0 32px 100px #171a3366}
+.company-detail-error{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:18px 0;padding:16px 18px;border:1px solid #f3c2c2;border-radius:16px;background:#fff6f6;color:#7f1d1d}.company-detail-error strong{font-weight:800}.company-detail-error span{flex:1 1 260px;min-width:0;overflow-wrap:anywhere}.company-detail-error .admin-secondary{margin-left:auto}
 @media(max-width:650px){.implementation-modal{padding:0}.implementation-modal>form,.implementation-modal>.review-customization-modal,.company-detail-modal{width:100%;max-height:100dvh;min-height:100%;border-radius:0;margin:0}.company-detail-overlay{padding:0}}
 .admin-panel table{table-layout:fixed}.admin-panel th,.admin-panel td{overflow-wrap:anywhere;word-break:normal;white-space:normal;line-height:1.4}.companies-table td>strong,.companies-table td>small{white-space:normal;overflow:visible;text-overflow:clip}.company-name-cell strong,.company-name-cell small{max-width:100%;white-space:normal;overflow-wrap:anywhere}.company-name-cell{align-items:flex-start}.company-actions{min-width:0}.company-actions>*{max-width:100%}
 
