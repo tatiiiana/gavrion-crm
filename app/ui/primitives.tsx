@@ -39,3 +39,21 @@ export function Skeleton({ variant = "line", className = "" }: { variant?: "titl
   const shape = variant === "title" ? "g-skeleton-title" : variant === "short" ? "g-skeleton-line-short" : "g-skeleton-line";
   return <span className={`g-skeleton ${shape} ${className}`.trim()} aria-hidden="true" />;
 }
+
+/** Paginación compacta y accesible para listados grandes. Las páginas son 1-based. */
+export function Pagination({ page, pageSize, total, onPageChange, label = "Registros" }: { page: number; pageSize: number; total: number; onPageChange: (page: number) => void; label?: string }) {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  if (total <= pageSize) return null;
+  const safePage = Math.min(Math.max(page, 1), pageCount);
+  const pages = Array.from(new Set([1, safePage - 1, safePage, safePage + 1, pageCount].filter(value => value >= 1 && value <= pageCount))).sort((a, b) => a - b);
+  const visiblePages: Array<number | "ellipsis"> = [];
+  pages.forEach((value, index) => { if (index > 0 && value - pages[index - 1] > 1) visiblePages.push("ellipsis"); visiblePages.push(value); });
+  return <nav className="g-pagination" aria-label={`Paginación de ${label.toLowerCase()}`}>
+    <span className="g-pagination-summary">{Math.min((safePage - 1) * pageSize + 1, total)}–{Math.min(safePage * pageSize, total)} de {total}</span>
+    <div className="g-pagination-controls">
+      <button type="button" className="g-pagination-button" disabled={safePage === 1} onClick={() => onPageChange(safePage - 1)} aria-label="Página anterior">←</button>
+      {visiblePages.map((value, index) => value === "ellipsis" ? <span key={`ellipsis-${index}`} className="g-pagination-ellipsis">…</span> : <button type="button" key={value} className={`g-pagination-button ${value === safePage ? "active" : ""}`} aria-current={value === safePage ? "page" : undefined} onClick={() => onPageChange(value)}>{value}</button>)}
+      <button type="button" className="g-pagination-button" disabled={safePage === pageCount} onClick={() => onPageChange(safePage + 1)} aria-label="Página siguiente">→</button>
+    </div>
+  </nav>;
+}

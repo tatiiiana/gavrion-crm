@@ -8,7 +8,7 @@ type EntityOption = [string, string];
 
 const entities: EntityOption[] = [
   ["contact", "Contactos"],
-  ["deal", "Oportunidades"],
+  ["deal", "Ventas y oportunidades"],
   ["property", "Propiedades"],
   ["order", "Pedidos"],
   ["reservation", "Reservaciones"],
