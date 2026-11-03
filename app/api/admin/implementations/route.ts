@@ -53,21 +53,21 @@ export async function GET(request: Request) {
     const owner = ownerUser ? { id: ownerUser.id, name: String(ownerUser.user_metadata?.full_name || ownerUser.email?.split("@")[0] || "Propietario"), email: ownerUser.email || "", invitationStatus: "active" } : pendingOwner ? { id: "pending", name: String(pendingOwner.name || "Propietario"), email: String(pendingOwner.email || ""), invitationStatus: "pending" } : null;
     const team = (teamResult.data || []).map(member => { const memberUser = userMap.get(member.user_id); return { id: member.user_id, name: String(memberUser?.user_metadata?.full_name || memberUser?.email?.split("@")[0] || "Usuario"), email: memberUser?.email || "", role: member.role, active: member.active !== false, invitationStatus: String(member.invitation_status || (member.active === false ? "revoked" : "accepted")) }; });
     const countEntries = await Promise.all([
-      ["contacts", safeTenantCount(admin, "contacts", detailTenantId)],
-      ["conversations", safeTenantCount(admin, "conversations", detailTenantId)],
-      ["deals", safeTenantCount(admin, "deals", detailTenantId)],
-      ["pendingTasks", safeTenantCount(admin, "tasks", detailTenantId, query => query.is("completed_at", null))],
-      ["forms", safeTenantCount(admin, "site_form_submissions", detailTenantId)],
-      ["reservations", safeTenantCount(admin, "reservations", detailTenantId)],
-      ["orders", safeTenantCount(admin, "orders", detailTenantId)],
-      ["appointments", safeTenantCount(admin, "appointments", detailTenantId)],
-      ["properties", safeTenantCount(admin, "properties", detailTenantId)],
-      ["propertyInquiries", safeTenantCount(admin, "property_inquiries", detailTenantId)],
-      ["propertyVisits", safeTenantCount(admin, "property_visits", detailTenantId)],
-      ["quotes", safeTenantCount(admin, "quotes", detailTenantId)],
-      ["products", safeTenantCount(admin, "products", detailTenantId)]
+      safeTenantCount(admin, "contacts", detailTenantId).then(value => ["contacts", value] as const),
+      safeTenantCount(admin, "conversations", detailTenantId).then(value => ["conversations", value] as const),
+      safeTenantCount(admin, "deals", detailTenantId).then(value => ["deals", value] as const),
+      safeTenantCount(admin, "tasks", detailTenantId, query => query.is("completed_at", null)).then(value => ["pendingTasks", value] as const),
+      safeTenantCount(admin, "site_form_submissions", detailTenantId).then(value => ["forms", value] as const),
+      safeTenantCount(admin, "reservations", detailTenantId).then(value => ["reservations", value] as const),
+      safeTenantCount(admin, "orders", detailTenantId).then(value => ["orders", value] as const),
+      safeTenantCount(admin, "appointments", detailTenantId).then(value => ["appointments", value] as const),
+      safeTenantCount(admin, "properties", detailTenantId).then(value => ["properties", value] as const),
+      safeTenantCount(admin, "property_inquiries", detailTenantId).then(value => ["propertyInquiries", value] as const),
+      safeTenantCount(admin, "property_visits", detailTenantId).then(value => ["propertyVisits", value] as const),
+      safeTenantCount(admin, "quotes", detailTenantId).then(value => ["quotes", value] as const),
+      safeTenantCount(admin, "products", detailTenantId).then(value => ["products", value] as const)
     ]);
-    const health = Object.fromEntries(countEntries);
+    const health = Object.fromEntries(countEntries) as Record<string, number|null>;
     const site = siteResult.data || null;
     const channelRows = channelsResult.data || [];
     const calendarRows = calendarsResult.data || [];
